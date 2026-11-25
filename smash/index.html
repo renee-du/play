@@ -15,6 +15,9 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:none;o
 .tools button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .tools svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .tools button[aria-pressed="false"] .on,.tools button[aria-pressed="true"] .off{display:none}
+.tools button.hide{display:none}
+#window:not(.hide){animation:rise .6s ease both}
+@keyframes rise{from{opacity:0;transform:scale(.7)}}
 .veil{position:fixed;inset:0;background:var(--paper);z-index:3;transition:opacity 1.1s ease;pointer-events:none}
 .veil.gone{opacity:0}
 </style>
@@ -22,6 +25,7 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:none;o
 <body>
 <div class="tools">
   <button id="sound" aria-pressed="true" aria-label="Sound" title="Sound"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path class="on" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="off" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+  <button id="window" class="hide" aria-label="Make a window from the pieces" title="Make a window"><svg viewBox="0 0 24 24"><path d="M6.5 20.5V10a5.5 5.5 0 0 1 11 0v10.5z"/><path d="M12 4.6v15.9M6.5 13.5h11"/></svg></button>
   <button id="reset" aria-label="Set a new table" title="Set a new table"><svg viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/></svg></button>
 </div>
 <div class="veil" id="veil"></div>
@@ -130,20 +134,21 @@ function glass(tint, base, edge = .92, maps = null) {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: .02, metalness: 0, ior: 1.5, specularIntensity: 1, envMapIntensity: 2,
     iridescence: .2, iridescenceIOR: 1.33, iridescenceThicknessRange: [220, 620], transparent: true, depthWrite: false });
   if (maps) { m.map = maps.map; m.alphaMap = maps.dens; }
+  m.userData = { fade: { value: 1 }, tint, base };
   // premultiplied: the tinted body lets the room through, the reflections are added on top at full strength
   m.blending = THREE.CustomBlending; m.blendSrc = THREE.OneFactor; m.blendDst = THREE.OneMinusSrcAlphaFactor;
   m.blendSrcAlpha = THREE.OneFactor; m.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
   const tc = new THREE.Color(tint);
   m.onBeforeCompile = sh => {
-    sh.uniforms.uTint = { value: tc }; sh.uniforms.uBase = { value: base }; sh.uniforms.uEdge = { value: edge }; sh.uniforms.uDens = { value: maps ? 1 : 0 };
-    sh.fragmentShader = 'uniform vec3 uTint; uniform float uBase; uniform float uEdge; uniform float uDens;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `
+    sh.uniforms.uTint = { value: tc }; sh.uniforms.uBase = { value: base }; sh.uniforms.uEdge = { value: edge }; sh.uniforms.uDens = { value: maps ? 1 : 0 }; sh.uniforms.uFade = m.userData.fade;
+    sh.fragmentShader = 'uniform vec3 uTint; uniform float uBase; uniform float uEdge; uniform float uDens; uniform float uFade;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `
       float f1 = 1.0 - abs(dot(normalize(vNormal), normalize(vViewPosition)));
       float fr = pow(f1, 1.25);
       float dens = uDens * diffuseColor.a;
       float ga = clamp(mix(mix(uBase, uEdge, fr), 0.95, dens), 0.0, 1.0);
       vec3 tint = mix(uTint, vec3(dot(uTint, vec3(0.3333))), 0.1) * (uDens > 0.5 ? diffuseColor.rgb : vec3(1.0));
       vec3 bodyC = tint * mix(1.0, 0.42, fr * (1.0 - dens)) * mix(1.0, 0.45, pow(f1, 4.0)) * (0.5 + 0.14 * clamp(dot(totalDiffuse, vec3(0.333)), 0.0, 1.6)) * mix(1.0, 1.45, dens);
-      gl_FragColor = vec4(bodyC * ga + totalSpecular * 1.5, ga);`);
+      gl_FragColor = vec4(bodyC * ga + totalSpecular * 1.5, ga) * uFade;`);
   };
   return m;
 }
@@ -418,6 +423,7 @@ function makeKinds() {
         for (const g of [c, d]) for (const off of [-w, 0, w, 2 * w]) { g.lineWidth = lw; g.beginPath();
           for (let y = -10; y <= h + 10; y += 8) g.lineTo(x0 + off + y * .45 + Math.sin(y * .02 + ph) * wob, y); g.stroke(); } }
     }));
+    twist.userData.tint = '#1f3fb6';
     const fx = (th, y) => { const sp = Math.exp(-((angTo(th, 0) / .4) ** 2)) * smooth01((y - .13) / .056) ** 2;
       return .0016 * Math.cos(th * 14) * band(y, .008, .14, .03) + .017 * sp; };
     const fy = (th, y) => .006 * Math.exp(-((angTo(th, 0) / .45) ** 2)) * smooth01((y - .15) / .036);
@@ -557,7 +563,7 @@ function hfRebuild(box) {
   const i0 = Math.max(0, Math.floor((box.min.x - x0) / cs) - 1), i1 = Math.min(nx - 1, Math.floor((box.max.x - x0) / cs) + 1);
   const j0 = Math.max(0, Math.floor((box.min.z - z0) / cs) - 1), j1 = Math.min(HF.nz - 1, Math.floor((box.max.z - z0) / cs) + 1);
   for (let j = j0; j <= j1; j++) h.fill(0, j * nx + i0, j * nx + i1 + 1);
-  for (const o of objs) if (!o.broken && o.def.flat && o.wbox.intersectsBox(box)) hfRaster(o.wtris);
+  for (const o of objs) if (!o.broken && o.def.flat && !o.lifted && o.wbox.intersectsBox(box)) hfRaster(o.wtris);
   for (const s of statics) if (s.wbox.intersectsBox(box)) hfRaster(s.wtris);
 }
 function worldTris(geo, mat) {
@@ -608,13 +614,13 @@ function buildObjects() {
     o.meshes = meshes;
     const cs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, depthWrite: false, toneMapped: false, opacity: def.glass ? .22 : def.flat ? .55 : .75 }));
     const fr = footRadius(def) * (def.flat ? 2.1 : 2.6);
-    cs.scale.set(fr, fr, 1); cs.rotation.x = -Math.PI / 2; cs.position.y = .0004; cs.renderOrder = -1; group.add(cs); o.contact = cs;
+    cs.scale.set(fr, fr, 1); cs.rotation.x = -Math.PI / 2; cs.position.y = .0004; cs.renderOrder = -1; group.add(cs); o.contact = cs; o.contactA = cs.material.opacity;
     root.add(group); group.updateMatrixWorld(true);
     if (def.glass) {
       const L = new THREE.Vector3(1.1, 0, -1.2).normalize(), len = def.R * 2 + def.H * .72, wid = def.R * 2.3;
       const holder = new THREE.Group(); holder.rotation.y = Math.atan2(-L.z, L.x); holder.position.y = .0005;
       const cm = new THREE.Mesh(new THREE.PlaneGeometry(len, wid), new THREE.MeshBasicMaterial({ map: causticTex(def.tint), transparent: true, depthWrite: false, toneMapped: false }));
-      cm.rotation.x = -Math.PI / 2; cm.position.x = len / 2 - def.R * .9; cm.renderOrder = -1; holder.add(cm); group.add(holder);
+      cm.rotation.x = -Math.PI / 2; cm.position.x = len / 2 - def.R * .9; cm.renderOrder = -1; holder.add(cm); group.add(holder); o.caustic = holder; o.causticMat = cm.material;
     }
     if (def.flat) { o.wtris = worldTris(meshes[0].geometry, meshes[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
     o.H = def.H;
@@ -1074,6 +1080,7 @@ let reform = null;
 const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 function startReform() {
   if (reform) return;
+  endDrag(); cancelPress(); exitWindow();
   const broken = objs.filter(o => o.broken);
   if (!broken.length && !shards.length) { buildObjects(); return; }
   HAM.pending = null;
@@ -1090,7 +1097,7 @@ function startReform() {
     mid.x += rand(-.05, .05); mid.z += rand(-.05, .05);
     const dist = from.distanceTo(to);
     s.rf = { from, mid, to, q0: m.quaternion.clone(), q1: o.group.quaternion.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 7) * (Math.random() < .5 ? -1 : 1),
-      delay: oi * .09 + clamp(dist * 1.2, 0, .5) * rand(.3, 1) + rand(0, .25), dur: rand(1.05, 1.45) + dist * .6, done: false };
+      delay: oi * .09 + clamp(dist * 1.2, 0, .5) * rand(.3, 1) + rand(0, .25), dur: rand(1.05, 1.45) + dist * .6, done: false, m0: m.morphTargetInfluences ? m.morphTargetInfluences[0] : 0 };
     list.push(s);
   }
   const byObj = new Map(); for (const s of list) { const a = byObj.get(s.obj) || []; a.push(s); byObj.set(s.obj, a); }
@@ -1109,6 +1116,7 @@ function stepReform(rdt) {
     const e = easeIO(u), a = 1 - e;
     // quadratic arc home
     s.mesh.position.set(a * a * f.from.x + 2 * a * e * f.mid.x + e * e * f.to.x, a * a * f.from.y + 2 * a * e * f.mid.y + e * e * f.to.y, a * a * f.from.z + 2 * a * e * f.mid.z + e * e * f.to.z);
+    if (s.mesh.morphTargetInfluences) s.mesh.morphTargetInfluences[0] = f.m0 * (1 - e);
     tmpQ.copy(f.q0).slerp(f.q1, e); spinQ.setFromAxisAngle(f.axis, f.spin * Math.pow(a, 1.5)); s.mesh.quaternion.copy(spinQ).multiply(tmpQ);
     if (Math.random() < .08 * (1 - Math.abs(u - .5) * 2) + .01) addP({ k: 0, x: s.mesh.position.x, y: s.mesh.position.y, z: s.mesh.position.z, vx: rand(-.05, .05), vy: rand(.02, .1), vz: rand(-.05, .05), sw: rand(-2, 2), s: rand(.002, .005), life: 0, max: rand(.6, 1.2), c: colorV(pick(s.obj.def.pal)), ph: rand(TAU) });
     if (u >= 1) { f.done = true; s.mesh.position.copy(f.to); s.mesh.quaternion.copy(f.q1);
@@ -1138,20 +1146,21 @@ function stepReform(rdt) {
 
 /* ------------------------------------------------------------------- loop */
 let last = performance.now(), glintT = 0;
+let DT_MAX = .05;
 function frame(now) {
-  const rdt = Math.min(.05, (now - last) / 1000); last = now;
+  const rdt = Math.min(DT_MAX, (now - last) / 1000); last = now;
   let ts = 1;
   if (freezeT > 0) { freezeT -= rdt; ts = .02; } else if (slowT > 0) { slowT -= rdt; const u = 1 - slowT / slowDur; ts = lerp(slowMin, 1, u * u); }
   const dt = rdt * ts;
   for (const o of objs) {
     if (o.appear < 1) { o.appear = Math.min(1, o.appear + rdt / .8); const e = easeOut(clamp(o.appear, 0, 1)); o.group.position.y = (1 - e) * .03; o.group.visible = o.appear > 0; }
-    o.wobV.x += (-o.wob.x * 320 - o.wobV.x * 10) * dt; o.wobV.y += (-o.wob.y * 320 - o.wobV.y * 10) * dt; o.wob.addScaledVector(o.wobV, dt);
+    o.wobV.x += (-o.wob.x * 320 - o.wobV.x * 10) * dt; o.wobV.y += (-o.wob.y * 320 - o.wobV.y * 10) * dt; o.wob.addScaledVector(o.wobV, dt); o.wob.clampScalar(-3, 3);
     if (!o.def.flat && !o.broken) { o.group.rotation.z = -o.wob.x * .05; o.group.rotation.x = o.wob.y * .05; }
   }
   const sub = dt > 0 ? Math.max(1, Math.ceil(dt / (1 / 240))) : 0, h = dt / Math.max(1, sub);
-  for (let k = 0; k < sub; k++) for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; if (s.asleep) continue; if (stepShard(s, h)) settle(s); }
+  for (let k = 0; k < sub; k++) for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; if (s.asleep || s.drag) continue; if (stepShard(s, h)) settle(s); }
   for (const o of objs) if (o.staticDirty) { o.staticT = (o.staticT || 0) + rdt; const moving = shards.some(s => !s.asleep && s.obj === o); if (o.staticT > .35 || !moving) rebuildStatic(o); }
-  stepReform(rdt);
+  stepReform(rdt); stepDrag(rdt); stepWindow(rdt, now); updateWinBtn();
   crumbs.step(dt); stepParticles(dt, rdt); stepRings(dt);
   if (flash.intensity > 0) flash.intensity = Math.max(0, flash.intensity * Math.exp(-rdt * 18) - .01);
   glintT -= rdt;
@@ -1165,7 +1174,8 @@ function frame(now) {
   if (shake > 1e-5) camera.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(shake));
   // while the view is turning the table slides under a still pointer: rest the hammer, aim again once it settles
   const turning = now - (VIEW.lastOrbit || -1e9) < 220 || Math.abs(VIEW.tAz - VIEW.az) + Math.abs(VIEW.tEl - VIEW.el) + Math.abs(VIEW.tDist - VIEW.dist) / VIEW.fit > .004;
-  if (!HAM.touch) {
+  if (DRAG || WIN.mode) { HAM.vis = 0; HAM.touch = false; }
+  else if (!HAM.touch) {
     if (hoverXY && !turning) { if (HAM.t > .12) { const h = pickAt(hoverXY[0], hoverXY[1]); if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); } } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
     else HAM.vis = Math.max(0, HAM.vis - rdt * 10);
   }
@@ -1174,13 +1184,417 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+/* ----------------------------------------------------------- the window */
+// every broken piece, laid flat at its true size, arranged as a rose of colour, fused into one panel that rises into the light
+const WIN = { mode: null, t: 0, spin: 0, spinV: 0, fade: 1, fadeT: 1, P: null };
+const camGoal = new THREE.Vector3(); let camFollow = false;
+const winBtn = document.getElementById('window'); let winBtnShown = false;
+function updateWinBtn() { const show = !WIN.mode && !reform && shards.length > 0; if (show !== winBtnShown) { winBtnShown = show; winBtn.classList.toggle('hide', !show); } }
+function applyFade(f) {
+  for (const o of objs) { if (o.broken) continue;
+    for (const m of o.def.mats) if (m.userData.fade) m.userData.fade.value = f;
+    o.contact.material.opacity = o.contactA * f; if (o.causticMat) o.causticMat.opacity = f; o.group.visible = f > .003 && o.appear > 0; }
+}
+function eigenMin(C) {
+  // eigenvector of the smallest eigenvalue of a symmetric 3x3, by power iteration on (trace - C)
+  const tr = C[0] + C[4] + C[8] + 1e-12; let v = [.31, .52, .79];
+  for (let i = 0; i < 48; i++) { const w = [tr * v[0] - (C[0] * v[0] + C[1] * v[1] + C[2] * v[2]), tr * v[1] - (C[3] * v[0] + C[4] * v[1] + C[5] * v[2]), tr * v[2] - (C[6] * v[0] + C[7] * v[1] + C[8] * v[2])];
+    const l = Math.hypot(w[0], w[1], w[2]) || 1; v = [w[0] / l, w[1] / l, w[2] / l]; }
+  return new THREE.Vector3(v[0], v[1], v[2]);
+}
+function flatPiece(s) {
+  const part = s.obj.parts[s.pi], c = s.com, P = [], nS = new THREE.Vector3();
+  for (let i = 0; i < s.tris.length; i += 2) { const m = mid(part, s.tris[i], s.tris[i + 1]); P.push(m.p[0] - c.x, m.p[1] - c.y, m.p[2] - c.z); nS.x += m.n[0]; nS.y += m.n[1]; nS.z += m.n[2]; }
+  const k = P.length / 3; if (k < 3) return null;
+  let mx = 0, my = 0, mz = 0; for (let i = 0; i < P.length; i += 3) { mx += P[i]; my += P[i + 1]; mz += P[i + 2]; } mx /= k; my /= k; mz /= k;
+  const C = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < P.length; i += 3) { const x = P[i] - mx, y = P[i + 1] - my, z = P[i + 2] - mz; C[0] += x * x; C[1] += x * y; C[2] += x * z; C[4] += y * y; C[5] += y * z; C[8] += z * z; }
+  C[3] = C[1]; C[6] = C[2]; C[7] = C[5];
+  const n = eigenMin(C); if (n.dot(nS) < 0) n.negate();
+  const e1 = (Math.abs(n.y) < .9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).cross(n).normalize(), e2 = new THREE.Vector3().crossVectors(n, e1);
+  const T = new Float32Array(k * 2); let ext = 0, sxx = 0, sxy = 0, syy = 0, cx = 0, cy = 0;
+  for (let i = 0; i < k; i++) { const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2]; const a = x * e1.x + y * e1.y + z * e1.z, b = x * e2.x + y * e2.y + z * e2.z; T[i * 2] = a; T[i * 2 + 1] = b; cx += a; cy += b; ext = Math.max(ext, Math.hypot(a, b)); }
+  cx /= k; cy /= k; for (let i = 0; i < k; i++) { const a = T[i * 2] - cx, b = T[i * 2 + 1] - cy; sxx += a * a; sxy += a * b; syy += b * b; }
+  let area = 0; for (let i = 0; i < T.length; i += 6) area += Math.abs((T[i + 2] - T[i]) * (T[i + 5] - T[i + 1]) - (T[i + 4] - T[i]) * (T[i + 3] - T[i + 1])) / 2;
+  if (area <= 0) return null;
+  // the mesh gets a flattened twin to morph into
+  const z0 = mx * n.x + my * n.y + mz * n.z, pa = s.mesh.geometry.attributes.position, fl = new Float32Array(pa.count * 3);
+  for (let i = 0; i < pa.count; i++) { const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+    const a = x * e1.x + y * e1.y + z * e1.z, b = x * e2.x + y * e2.y + z * e2.z, h = (x * n.x + y * n.y + z * n.z - z0) * .15;
+    fl[i * 3] = a * e1.x + b * e2.x + h * n.x; fl[i * 3 + 1] = a * e1.y + b * e2.y + h * n.y; fl[i * 3 + 2] = a * e1.z + b * e2.z + h * n.z; }
+  s.mesh.geometry.morphAttributes.position = [new THREE.BufferAttribute(fl, 3)];
+  s.mesh.updateMorphTargets(); s.mesh.morphTargetInfluences[0] = 0;
+  // its colour in the window: the glass it came from, a little richer
+  const mat = s.obj.def.mats[part.mats.outer], src = new THREE.Color(mat.userData.tint || '#dddddd'), rgb = {}; src.getRGB(rgb, THREE.SRGBColorSpace);
+  const chroma = Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b), clear = chroma < .12, hsl = {}; src.getHSL(hsl);
+  // no two pieces of hand-made glass are quite the same
+  const col = clear ? new THREE.Color().setHSL(.43 + rand(-.03, .03), .22, .8 + rand(-.04, .04)) : new THREE.Color().setHSL((hsl.h + rand(-.018, .018) + 1) % 1, clamp(hsl.s * rand(.85, 1.05), 0, 1), clamp(hsl.l + rand(-.07, .07), .3, .66));
+  return { s, e1, e2, n, T, area, ext, ang0: .5 * Math.atan2(2 * sxy, sxx - syy), col, dens: clear ? rand(.16, .26) : rand(.46, .66), sa: rand(TAU), rank: clear ? 1000 : (hsl.h * 360 - 25 + 720) % 360, r1: Math.random(), r2: Math.random(), pal: s.obj.def.pal };
+}
+function layoutPanel(P) {
+  const A = P.reduce((a, p) => a + p.area, 0), maxExt = Math.max(...P.map(p => p.ext)), FILL = .7, ASP = .74;
+  let Hp = Math.sqrt(A / FILL / ASP), Wp = Hp * ASP;
+  if (Wp < maxExt * 2.4) { Wp = maxExt * 2.4; Hp = Wp / ASP; }
+  const c = Math.sqrt(Wp * Hp / 46000), nx = Math.ceil(Wp / c), ny = Math.ceil(Hp / c); Wp = nx * c; Hp = ny * c;
+  const occ = new Uint8Array(nx * ny);
+  // the design: a rose of colour, amber at the heart, then greens, teals, blues and rose, and clear glass toward the corners
+  const yc = Hp * .06, PW = 2.6, field = (x, y) => (Math.abs(x / (Wp / 2)) ** PW + Math.abs((y - yc) / (Hp / 2)) ** PW) ** (1 / PW);
+  const ds = new Float32Array(nx * ny); for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) ds[iy * nx + ix] = field(-Wp / 2 + (ix + .5) * c, -Hp / 2 + (iy + .5) * c);
+  ds.sort();
+  let cum = 0; for (const p of P.slice().sort((a, b) => a.rank - b.rank || b.area - a.area)) { const q = (cum + p.area / 2) / A; cum += p.area; p.dq = ds[Math.min(ds.length - 1, Math.floor(q * ds.length))]; }
+  // offsets from a cell, nearest first
+  const R = Math.ceil(Math.hypot(nx, ny)), buckets = Array.from({ length: R + 1 }, () => []);
+  for (let dy = -ny; dy <= ny; dy++) for (let dx = -nx; dx <= nx; dx++) { const r = Math.round(Math.hypot(dx, dy)); if (r <= R) buckets[r].push(dx, dy); }
+  const SP = Int16Array.from(buckets.flat());
+  const maskOf = (p, th) => {
+    const cs = Math.cos(th), sn = Math.sin(th), T = p.T, cells = new Set(), out = [];
+    for (let i = 0; i < T.length; i += 6) {
+      const ax = (T[i] * cs - T[i + 1] * sn) / c, ay = (T[i] * sn + T[i + 1] * cs) / c, bx = (T[i + 2] * cs - T[i + 3] * sn) / c, by = (T[i + 2] * sn + T[i + 3] * cs) / c, qx = (T[i + 4] * cs - T[i + 5] * sn) / c, qy = (T[i + 4] * sn + T[i + 5] * cs) / c;
+      const det = (by - qy) * (ax - qx) + (qx - bx) * (ay - qy); if (Math.abs(det) < 1e-12) continue;
+      for (let oy = Math.floor(Math.min(ay, by, qy)); oy <= Math.ceil(Math.max(ay, by, qy)); oy++) for (let ox = Math.floor(Math.min(ax, bx, qx)); ox <= Math.ceil(Math.max(ax, bx, qx)); ox++) {
+        const l1 = ((by - qy) * (ox - qx) + (qx - bx) * (oy - qy)) / det, l2 = ((qy - ay) * (ox - qx) + (ax - qx) * (oy - qy)) / det;
+        if (l1 >= -.02 && l2 >= -.02 && 1 - l1 - l2 >= -.02) { const key = ox * 4096 + oy; if (!cells.has(key)) { cells.add(key); out.push(ox, oy); } } }
+    }
+    if (!out.length) out.push(0, 0); return out;
+  };
+  const fits = (m, cx, cy) => { for (let i = 0; i < m.length; i += 2) { const x = cx + m[i], y = cy + m[i + 1]; if (x < 0 || y < 0 || x >= nx || y >= ny || occ[y * nx + x]) return false; } return true; };
+  for (const p of P.slice().sort((a, b) => b.area - a.area)) {
+    const ph = rand(TAU), den = (Math.abs(Math.cos(ph)) ** PW + Math.abs(Math.sin(ph)) ** PW) ** (1 / PW);
+    const x = clamp(p.dq * Math.cos(ph) / den * Wp / 2, -Wp / 2, Wp / 2), y = clamp(p.dq * Math.sin(ph) / den * Hp / 2 + yc, -Hp / 2, Hp / 2);
+    // long pieces point out from the heart, like rays
+    const th0 = Math.atan2(y - yc, x) - p.ang0, ths = [th0, th0 + Math.PI, th0 + .4, th0 - .4, th0 + Math.PI / 2], masks = ths.map(t => maskOf(p, t));
+    const tcx = clamp(Math.floor((x + Wp / 2) / c), 0, nx - 1), tcy = clamp(Math.floor((y + Hp / 2) / c), 0, ny - 1);
+    let best = null;
+    for (let k = 0; k < SP.length && !best; k += 2) { const cx = tcx + SP[k], cy = tcy + SP[k + 1]; if (cx < 0 || cy < 0 || cx >= nx || cy >= ny || occ[cy * nx + cx]) continue;
+      for (let r = 0; r < ths.length; r++) if (fits(masks[r], cx, cy)) { best = [cx, cy, r]; break; } }
+    if (!best) best = [tcx, tcy, 0];
+    const [cx, cy, r] = best, m = masks[r];
+    for (let i = 0; i < m.length; i += 2) { const X = cx + m[i], Y = cy + m[i + 1]; if (X >= 0 && Y >= 0 && X < nx && Y < ny) occ[Y * nx + X] = 1; }
+    p.x = -Wp / 2 + (cx + .5) * c; p.y = -Hp / 2 + (cy + .5) * c; p.th = ths[r];
+  }
+  return { Wp, Hp };
+}
+function panelTextures(P, Wp, Hp) {
+  const TH = 1280, TW = Math.max(64, Math.round(TH * Wp / Hp)), px = Hp / TH, N = TW * TH, lab = new Int32Array(N);
+  P.forEach((p, idx) => {
+    const cs = Math.cos(p.th), sn = Math.sin(p.th), T = p.T, X = u => u, L = idx + 1;
+    for (let i = 0; i < T.length; i += 6) {
+      const q = [0, 2, 4].map(j => [(p.x + T[i + j] * cs - T[i + j + 1] * sn + Wp / 2) / px - .5, (p.y + T[i + j] * sn + T[i + j + 1] * cs + Hp / 2) / px - .5]);
+      const [[ax, ay], [bx, by], [qx, qy]] = q, det = (by - qy) * (ax - qx) + (qx - bx) * (ay - qy); if (Math.abs(det) < 1e-9) continue;
+      const x0 = Math.max(0, Math.floor(Math.min(ax, bx, qx))), x1 = Math.min(TW - 1, Math.ceil(Math.max(ax, bx, qx))), y0 = Math.max(0, Math.floor(Math.min(ay, by, qy))), y1 = Math.min(TH - 1, Math.ceil(Math.max(ay, by, qy)));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const l1 = ((by - qy) * (x - qx) + (qx - bx) * (y - qy)) / det, l2 = ((qy - ay) * (x - qx) + (ax - qx) * (y - qy)) / det;
+        if (l1 >= 0 && l2 >= 0 && l1 + l2 <= 1) lab[y * TW + x] = L; }
+    }
+  });
+  // melting: every gap takes the glass of the nearest piece (two-pass chamfer distance)
+  const dist = new Float32Array(N); for (let i = 0; i < N; i++) dist[i] = lab[i] ? 0 : 1e9;
+  const chamfer = (D, Lb) => {
+    const S2 = Math.SQRT2;
+    for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) { const i = y * TW + x; let d = D[i]; if (d === 0) continue; let l = Lb ? Lb[i] : 0;
+      if (x > 0 && D[i - 1] + 1 < d) { d = D[i - 1] + 1; if (Lb) l = Lb[i - 1]; }
+      if (y > 0) { if (D[i - TW] + 1 < d) { d = D[i - TW] + 1; if (Lb) l = Lb[i - TW]; } if (x > 0 && D[i - TW - 1] + S2 < d) { d = D[i - TW - 1] + S2; if (Lb) l = Lb[i - TW - 1]; } if (x < TW - 1 && D[i - TW + 1] + S2 < d) { d = D[i - TW + 1] + S2; if (Lb) l = Lb[i - TW + 1]; } }
+      D[i] = d; if (Lb) Lb[i] = l; }
+    for (let y = TH - 1; y >= 0; y--) for (let x = TW - 1; x >= 0; x--) { const i = y * TW + x; let d = D[i]; if (d === 0) continue; let l = Lb ? Lb[i] : 0;
+      if (x < TW - 1 && D[i + 1] + 1 < d) { d = D[i + 1] + 1; if (Lb) l = Lb[i + 1]; }
+      if (y < TH - 1) { if (D[i + TW] + 1 < d) { d = D[i + TW] + 1; if (Lb) l = Lb[i + TW]; } if (x < TW - 1 && D[i + TW + 1] + S2 < d) { d = D[i + TW + 1] + S2; if (Lb) l = Lb[i + TW + 1]; } if (x > 0 && D[i + TW - 1] + S2 < d) { d = D[i + TW - 1] + S2; if (Lb) l = Lb[i + TW - 1]; } }
+      D[i] = d; if (Lb) Lb[i] = l; }
+  };
+  chamfer(dist, lab);
+  let maxD = 1; for (let i = 0; i < N; i++) if (dist[i] < 1e8) maxD = Math.max(maxD, dist[i]);
+  // the lead lines run along every seam; distance from a seam also gives each piece its rounded, gem-like body
+  const bd = new Float32Array(N);
+  for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) { const i = y * TW + x, l = lab[i];
+    bd[i] = (x === 0 || y === 0 || x === TW - 1 || y === TH - 1 || lab[i - 1] !== l || lab[i + 1] !== l || lab[i - TW] !== l || lab[i + TW] !== l) ? 0 : 1e9; }
+  chamfer(bd, null);
+  const cap = clamp(.006 / px, 6, 20), leadPx = Math.max(.75, .00048 / px);
+  const colA = new Uint8Array(N * 4), auxA = new Uint8Array(N * 4), pc = P.map(p => { const o = {}; p.col.getRGB(o, THREE.SRGBColorSpace); return o; });
+  for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
+    const i = y * TW + x, l = lab[i] - 1; if (l < 0) continue; const p = P[l], c = pc[l];
+    // cathedral glass: never quite even, a slow ripple of thicker and thinner
+    const v = .84 + .3 * vnoise(x * .016 + p.r1 * 50, y * .016, p.r2 * 50) + .07 * Math.sin((x * .7 + y) * .05 + p.r1 * 9) + .06 * (vnoise(x * .09, y * .09, p.r1 * 30) - .5);
+    const gx = ((x + .5) * px - Wp / 2 - p.x) * Math.cos(p.sa) + ((y + .5) * px - Hp / 2 - p.y) * Math.sin(p.sa), w = v * (1 + .16 * clamp(gx / Math.max(p.ext, .004), -1, 1));
+    colA[i * 4] = clamp(c.r * w, 0, 1) * 255; colA[i * 4 + 1] = clamp(c.g * w, 0, 1) * 255; colA[i * 4 + 2] = clamp(c.b * w, 0, 1) * 255; colA[i * 4 + 3] = p.dens * 255;
+    auxA[i * 4] = Math.min(1, dist[i] / maxD) * 255; auxA[i * 4 + 1] = Math.min(1, bd[i] / cap) * 255; auxA[i * 4 + 2] = p.r1 * 255; auxA[i * 4 + 3] = p.r2 * 255;
+  }
+  const mkT = (d, srgb) => { const t = new THREE.DataTexture(d, TW, TH, THREE.RGBAFormat); if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.anisotropy = 4; t.needsUpdate = true; return t; };
+  return { col: mkT(colA, true), aux: mkT(auxA, false), TW, TH, leadW: leadPx / cap };
+}
+const PANEL_VS = 'varying vec2 vUv; varying vec3 vW;\nvoid main(){ vUv = uv; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }';
+const PANEL_FS = `
+uniform sampler2D tCol, tAux; uniform vec2 uTex; uniform vec3 uLight, uSun, uAX, uAY, uN;
+uniform float uMelt, uLead, uLeadW, uGlow, uFade, uTime, uHeat;
+varying vec2 vUv; varying vec3 vW;
+void main(){
+  vec4 c = texture2D(tCol, vUv), a = texture2D(tAux, vUv);
+  float m = uMelt, rev = 1.0 - smoothstep(m, m + 0.012, a.r);
+  if (rev < 0.002) discard;
+  float heat = smoothstep(m - 0.08, m, a.r) * rev * uHeat;
+  // each piece is a slightly domed gem with its own tilt
+  float hx = texture2D(tAux, vUv + vec2(uTex.x, 0.0)).g - texture2D(tAux, vUv - vec2(uTex.x, 0.0)).g;
+  float hy = texture2D(tAux, vUv + vec2(0.0, uTex.y)).g - texture2D(tAux, vUv - vec2(0.0, uTex.y)).g;
+  vec3 nT = normalize(vec3(-hx * 1.8 + (a.b - 0.5) * 0.2, -hy * 1.8 + (a.a - 0.5) * 0.2, 1.0));
+  float side = gl_FrontFacing ? 1.0 : -1.0;
+  vec3 Ng = normalize(uN) * side, N = normalize(uAX * nT.x * side + uAY * nT.y + Ng * nT.z);
+  vec3 V = normalize(cameraPosition - vW), L = normalize(uLight - vW);
+  float through = 1.0 - smoothstep(-0.06, 0.06, dot(Ng, L));      // the light is behind the glass
+  float align = max(dot(-L, V), 0.0);                                // ...and you are looking toward it
+  float core = smoothstep(0.1, 1.0, a.g);
+  vec3 tint = c.rgb; float dens = c.a;
+  // each piece a rounded gem: lit from its own dome, a bright rim where the light bends at the edge
+  float shade = 0.88 + 0.3 * dot(nT.xy, vec2(-0.45, 0.75));
+  float rim = (1.0 - core) * (1.0 - smoothstep(0.0, 0.35, a.g));
+  float hot = pow(align, 14.0), sun = pow(align, 90.0);
+  vec3 trans = tint * (0.56 + 0.3 * core) * shade * (0.95 + 0.25 * hot) * uSun;
+  trans = min(mix(trans, uSun, sun * 0.6 + rim * 0.2 * (0.4 + hot)), vec3(0.97));
+  vec3 refl = tint * (0.32 + 0.16 * max(dot(N, L), 0.0)) * shade;
+  float tw = through * uGlow;
+  vec3 body = mix(refl, trans, tw);
+  float alpha = mix(min(1.0, dens * 1.35 + 0.1), dens * (1.0 - 0.25 * sun), tw);
+  vec3 R = reflect(-V, N);
+  float spec = pow(max(dot(R, L), 0.0), 140.0) * 2.4 * (1.0 - through) + pow(1.0 - abs(dot(N, V)), 4.0) * 0.2;
+  float twinkle = pow(max(dot(R, normalize(L + vec3(0.0, 0.25 * sin(uTime * 0.6), 0.0))), 0.0), 700.0) * 2.5;
+  // the studio's softboxes, reflected: broad soft panes of light sliding over the glass as it turns
+  float box1 = smoothstep(0.62, 0.9, dot(R, normalize(vec3(-0.55, 0.55, 0.62)))), box2 = smoothstep(0.8, 0.95, dot(R, normalize(vec3(0.85, 0.3, 0.2))));
+  float env = (box1 * 0.32 + box2 * 0.22) * (0.35 + 0.65 * pow(1.0 - abs(dot(N, V)), 1.5) + 0.4 * core);
+  vec3 col = body * alpha + vec3(spec + twinkle + env) * (0.6 + 0.4 * tw);
+  float lead = (1.0 - smoothstep(uLeadW * 0.55, uLeadW * 1.2, a.g)) * uLead;
+  vec3 leadC = vec3(0.3, 0.29, 0.28) * (0.7 + 0.6 * max(dot(N, L), 0.0)) + vec3(spec * 0.5);
+  col = mix(col, leadC, lead); alpha = mix(alpha, 1.0, lead);
+  col += vec3(1.0, 0.72, 0.4) * heat * 1.25; alpha = max(alpha, heat * 0.8);
+  float f = rev * uFade; gl_FragColor = vec4(col * f, alpha * f);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+// the light that comes through, cast on the table in the panel's own colours (multiplies what is there)
+const CAST_FS = `
+uniform sampler2D tCol, tAux; uniform mat4 uInv; uniform vec2 uSize; uniform vec3 uLight; uniform float uStr, uMelt, uLeadW;
+varying vec2 vUv; varying vec3 vW;
+void main(){
+  vec3 outc = vec3(1.0);
+  vec3 Pl = (uInv * vec4(vW, 1.0)).xyz, Ll = (uInv * vec4(uLight, 1.0)).xyz;
+  float den = Pl.z - Ll.z;
+  if (abs(den) > 1e-6) {
+    float t = Pl.z / den;
+    if (t > 0.0 && t < 1.0) {
+      vec2 uv = mix(Pl.xy, Ll.xy, t) / uSize + 0.5;
+      vec2 e = smoothstep(vec2(0.0), vec2(0.012), uv) * smoothstep(vec2(0.0), vec2(0.012), 1.0 - uv);
+      float inside = e.x * e.y;
+      if (inside > 0.0) {
+        float bias = clamp(log2(1.0 + t * length(uLight - vW) * 30.0), 0.0, 2.4);
+        vec4 c = texture2D(tCol, uv, bias), a = texture2D(tAux, uv, bias * 0.5);
+        float rev = 1.0 - smoothstep(uMelt, uMelt + 0.02, a.r);
+        vec3 g = mix(vec3(1.0), c.rgb * 1.15, c.a * 0.95);
+        float lead = (1.0 - smoothstep(uLeadW * 0.5, uLeadW * 1.8, a.g)) * (1.0 - bias / 4.5);
+        g *= 1.0 - 0.45 * lead;
+        outc = mix(vec3(1.0), pow(clamp(g, 0.0, 1.0), vec3(0.4545)), inside * rev * uStr * 0.85);
+      }
+    }
+  }
+  gl_FragColor = vec4(outc, 1.0);
+}`;
+// a breath of coloured haze around the panel when the light is behind it
+const AURA_FS = `
+uniform sampler2D tCol; uniform float uStr; uniform vec3 uLight, uN;
+varying vec2 vUv; varying vec3 vW;
+void main(){
+  vec2 uv = (vUv - 0.5) * 1.8 + 0.5; vec4 c = texture2D(tCol, clamp(uv, 0.0, 1.0), 7.0);
+  vec2 q = (vUv - 0.5) * 2.0; float fall = 1.0 - smoothstep(0.25, 1.0, length(q));
+  vec3 L = normalize(uLight - vW), V = normalize(cameraPosition - vW);
+  float back = smoothstep(0.0, 0.7, dot(-L, V));
+  vec3 t = mix(vec3(1.0), pow(c.rgb, vec3(0.4545)), c.a * 0.6);
+  gl_FragColor = vec4(mix(vec3(1.0), t, fall * fall * uStr * back), 1.0);
+}`;
+const MULT = m => { m.blending = THREE.CustomBlending; m.blendSrc = THREE.DstColorFactor; m.blendDst = THREE.ZeroFactor; m.blendSrcAlpha = THREE.ZeroFactor; m.blendDstAlpha = THREE.OneFactor; m.transparent = true; m.depthWrite = false; m.toneMapped = false; return m; };
+const haloTex = (() => { const c = mk(256, 256), g = c.getContext('2d'), gr = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  gr.addColorStop(0, 'rgba(255,236,200,1)'); gr.addColorStop(.18, 'rgba(255,226,180,.55)'); gr.addColorStop(.5, 'rgba(255,220,180,.16)'); gr.addColorStop(1, 'rgba(255,220,180,0)'); g.fillStyle = gr; g.fillRect(0, 0, 256, 256); return new THREE.CanvasTexture(c); })();
+function piecePose(p, grp, zo, outP, outQ) {
+  // where a piece sits on the panel: its flat basis (e1, e2, n) turned by th, then placed at (x, y)
+  const B = new THREE.Matrix4().set(p.e1.x, p.e1.y, p.e1.z, 0, p.e2.x, p.e2.y, p.e2.z, 0, p.n.x, p.n.y, p.n.z, 0, 0, 0, 0, 1);
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), p.th).multiply(new THREE.Quaternion().setFromRotationMatrix(B));
+  outQ.copy(grp.quaternion).multiply(q);
+  outP.set(p.x, p.y, zo).applyMatrix4(grp.matrixWorld);
+}
+function enterWindow() {
+  if (WIN.mode || reform || !shards.length) return;
+  endDrag(); cancelPress(); HAM.pending = null;
+  for (const o of objs) { if (o.staticMesh) { root.remove(o.staticMesh); o.staticMesh.geometry.dispose(); o.staticMesh = null; } o.staticDirty = false; }
+  statics.length = 0;
+  const P = [];
+  for (const s of shards) { s.asleep = true; s.drag = false; s.mesh.visible = true; const p = flatPiece(s); if (p) P.push(p); else s.mesh.visible = false; }
+  if (!P.length) return;
+  const { Wp, Hp } = layoutPanel(P), tex = panelTextures(P, Wp, Hp);
+  const W = WIN; W.P = P; W.Wp = Wp; W.Hp = Hp; W.tex = tex; W.mode = 'gather'; W.t = 0; W.spin = 0; W.spinV = 0; W.fadeT = 0; W.chimeA = 0;
+  W.saved = { target: camTarget.clone(), el: VIEW.tEl, dist: VIEW.tDist };
+  W.yaw = VIEW.az; W.C = new THREE.Vector3(camTarget.x, 0, camTarget.z);
+  W.floatY = Math.max(.05, Hp * .16) + Hp / 2;
+  W.light = new THREE.Vector3(-Math.sin(W.yaw), 0, -Math.cos(W.yaw)).multiplyScalar(Hp * 1.8).add(W.C).setY(W.floatY + Hp * .95);
+  // the panel itself
+  const grp = new THREE.Group(); grp.rotation.order = 'YXZ'; grp.position.set(W.C.x, .0022, W.C.z); grp.rotation.set(-Math.PI / 2, W.yaw, 0);
+  const U = { tCol: { value: tex.col }, tAux: { value: tex.aux }, uTex: { value: new THREE.Vector2(1 / tex.TW, 1 / tex.TH) }, uLight: { value: W.light }, uSun: { value: new THREE.Color(1, .94, .82) },
+    uAX: { value: new THREE.Vector3() }, uAY: { value: new THREE.Vector3() }, uN: { value: new THREE.Vector3() }, uMelt: { value: 0 }, uLead: { value: 0 }, uLeadW: { value: tex.leadW }, uGlow: { value: 0 }, uFade: { value: 1 }, uTime: { value: 0 }, uHeat: { value: 0 } };
+  const pm = new THREE.ShaderMaterial({ uniforms: U, vertexShader: PANEL_VS, fragmentShader: PANEL_FS, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  pm.blending = THREE.CustomBlending; pm.blendSrc = THREE.OneFactor; pm.blendDst = THREE.OneMinusSrcAlphaFactor; pm.blendSrcAlpha = THREE.OneFactor; pm.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(Wp, Hp), pm); panel.renderOrder = 2; grp.add(panel);
+  const aura = new THREE.Mesh(new THREE.PlaneGeometry(Wp * 1.9, Hp * 1.7), MULT(new THREE.ShaderMaterial({ uniforms: { tCol: U.tCol, uStr: { value: 0 }, uLight: U.uLight, uN: U.uN }, vertexShader: PANEL_VS, fragmentShader: AURA_FS, side: THREE.DoubleSide })));
+  aura.position.z = -Hp * .02; aura.renderOrder = 1; grp.add(aura);
+  const fw = Math.max(.002, Hp * .0045), fm = new THREE.MeshStandardMaterial({ color: 0x9a958e, metalness: .8, roughness: .3, transparent: true, opacity: 0, depthWrite: false });
+  for (const [w, h, x, y] of [[Wp + fw * 2, fw, 0, Hp / 2 + fw / 2], [Wp + fw * 2, fw, 0, -Hp / 2 - fw / 2], [fw, Hp, Wp / 2 + fw / 2, 0], [fw, Hp, -Wp / 2 - fw / 2, 0]]) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, fw * 1.3), fm); b.position.set(x, y, 0); b.renderOrder = 3; grp.add(b); }
+  panel.visible = aura.visible = false; grp.children.forEach(c => { if (c.geometry.type === 'BoxGeometry') c.visible = false; });
+  scene.add(grp); grp.updateMatrixWorld(true);
+  const S = Math.max(2.4, Hp * 10), cast = new THREE.Mesh(new THREE.PlaneGeometry(S, S), MULT(new THREE.ShaderMaterial({ uniforms: { tCol: U.tCol, tAux: U.tAux, uInv: { value: new THREE.Matrix4() }, uSize: { value: new THREE.Vector2(Wp, Hp) }, uLight: U.uLight, uStr: { value: 0 }, uMelt: U.uMelt, uLeadW: U.uLeadW }, vertexShader: PANEL_VS, fragmentShader: CAST_FS })));
+  cast.rotation.x = -Math.PI / 2; cast.position.set(W.C.x, .0009, W.C.z); cast.renderOrder = -.5; scene.add(cast);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0, toneMapped: false }));
+  halo.scale.setScalar(Hp * 2.9); halo.renderOrder = -3; scene.add(halo);
+  Object.assign(W, { grp, panel, aura, frameMat: fm, U, cast, halo });
+  // each piece flies to its place, the heart of the rose first
+  const tp = new THREE.Vector3(), tq = new THREE.Quaternion();
+  for (const p of P) { const m = p.s.mesh; piecePose(p, grp, .0012, tp, tq);
+    const from = m.position.clone(), d = from.distanceTo(tp), midP = from.clone().lerp(tp, .5); midP.y = Math.max(from.y, tp.y) + .06 + d * .35 + rand(0, .05);
+    p.g = { from, mid: midP, to: tp.clone(), q0: m.quaternion.clone(), q1: tq.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 6) * (Math.random() < .5 ? -1 : 1),
+      delay: .1 + p.dq * 1.1 + rand(0, .35), dur: rand(.85, 1.2) + Math.min(.6, d * .5), done: false }; }
+  // look down on the table while the pieces gather
+  camGoal.copy(W.C); camFollow = true; VIEW.tEl = 1.05; VIEW.tDist = fitDist(Wp, Hp) * 1.05;
+  play('glass_smash_rev', { gain: .22, rate: .7, verb: .9 });
+  cv.style.cursor = 'default';
+}
+function fitDist(w, h) { const t = Math.tan(camera.fov * Math.PI / 360); return Math.max(h * 1.45 / (2 * t), w * 1.5 / (2 * t * camera.aspect)); }
+function stepWindow(rdt, now) {
+  const W = WIN;
+  if (Math.abs(W.fadeT - W.fade) > 1e-4) { W.fade += (W.fadeT - W.fade) * (1 - Math.exp(-rdt * 4)); if (Math.abs(W.fadeT - W.fade) < .002) W.fade = W.fadeT; applyFade(W.fade); }
+  if (camFollow) { camTarget.lerp(camGoal, 1 - Math.exp(-rdt * 3)); if (!W.mode && camTarget.distanceTo(camGoal) < 1e-4) camFollow = false; }
+  if (!W.mode) return;
+  W.t += rdt; const U = W.U, grp = W.grp;
+  if (W.mode === 'gather') {
+    let all = true; const tq = new THREE.Quaternion(), sq = new THREE.Quaternion();
+    for (const p of W.P) { const g = p.g, m = p.s.mesh; const u = clamp((W.t - g.delay) / g.dur, 0, 1); if (u < 1) all = false; if (u <= 0 || g.done) continue;
+      const e = easeIO(u), a = 1 - e;
+      m.position.set(a * a * g.from.x + 2 * a * e * g.mid.x + e * e * g.to.x, a * a * g.from.y + 2 * a * e * g.mid.y + e * e * g.to.y, a * a * g.from.z + 2 * a * e * g.mid.z + e * e * g.to.z);
+      tq.copy(g.q0).slerp(g.q1, e); sq.setFromAxisAngle(g.axis, g.spin * Math.pow(a, 1.5)); m.quaternion.copy(sq).multiply(tq);
+      m.morphTargetInfluences[0] = smooth01(u * 1.3);
+      if (u >= 1) { g.done = true; m.position.copy(g.to); m.quaternion.copy(g.q1); m.morphTargetInfluences[0] = 1; if (Math.random() < .18) play('glass_land', { gain: .06, rate: rand(1.3, 1.7), pan: panX(g.to.x), verb: .6 }); }
+    }
+    if (all && W.t > .3) { W.mode = 'meld'; W.t = 0; W.panel.visible = true; for (const p of W.P) p.s.mesh.visible = false;
+      play('glass_smash_rev', { gain: .3, rate: .52, verb: 1 }); }
+  } else if (W.mode === 'meld') {
+    const u = clamp(W.t / 2.4, 0, 1);
+    U.uMelt.value = easeIO(u) * 1.01; U.uHeat.value = smooth01(W.t / .35) * (1 - smooth01((u - .85) / .15)); U.uLead.value = smooth01((u - .45) / .5);
+    W.frameMat.opacity = U.uLead.value; grp.children.forEach(c => { if (c.geometry.type === 'BoxGeometry') c.visible = U.uLead.value > 0; });
+    if (u >= 1) { W.mode = 'rise'; W.t = 0; U.uHeat.value = 0; W.frameMat.transparent = false; W.frameMat.depthWrite = true; W.aura.visible = true;
+      camGoal.set(W.C.x, W.floatY - W.Hp * .2, W.C.z); VIEW.tEl = .34; VIEW.tDist = fitDist(W.Wp, W.Hp) * 1.3;
+      [0, 1, 2, 3, 4].forEach(i => play('glass_land', { gain: .07, rate: [1.5, 1.68, 1.89, 2, 2.25][i], verb: 1, delay: .5 + i * .16 })); }
+  } else {
+    const u = W.mode === 'rise' ? clamp(W.t / 2.8, 0, 1) : 1, e = easeIO(u);
+    if (W.mode === 'rise' && u >= 1) { W.mode = 'show'; W.t = 0; if (!SPIN) cv.style.cursor = 'grab'; }
+    if (!SPIN) { W.spin += W.spinV * rdt; W.spinV *= Math.exp(-rdt * 1.8); }
+    const bob = Math.sin(now * .0011) * W.Hp * .012 * e;
+    grp.position.y = lerp(.0022, W.floatY, easeOut(clamp(u * 1.15, 0, 1))) + bob;
+    grp.rotation.set(lerp(-Math.PI / 2, 0, smooth01(u * 1.1 - .05)), W.yaw + W.spin, Math.sin(now * .0007) * .012 * e);
+    W.halo.position.set(-Math.sin(W.yaw), 0, -Math.cos(W.yaw)).multiplyScalar(W.Hp * .7).add(W.C).setY(grp.position.y + W.Hp * .22);
+    const glow = smooth01((u - .25) / .75); U.uGlow.value = glow; W.cast.material.uniforms.uStr.value = glow; W.aura.material.uniforms.uStr.value = glow * .45; W.halo.material.opacity = glow * .8;
+    // when the panel turns to face straight into the light, a small chime
+    const face = Math.cos(W.spin); if (W.mode === 'show' && face > .985 && W.chimeA <= .985 && Math.abs(W.spinV) > .2) play('glass_land', { gain: .05, rate: 2, verb: 1 }); W.chimeA = face;
+    // motes drift out of the light, each the colour of the glass it came through
+    if (glow > .3 && Math.random() < rdt * 26) { const p = pick(W.P), v = new THREE.Vector3(p.x, p.y, 0).applyMatrix4(grp.matrixWorld), dir = camera.position.clone().sub(v).normalize();
+      addP({ k: 0, x: v.x, y: v.y, z: v.z, vx: dir.x * .03 + rand(-.01, .01), vy: rand(.01, .05), vz: dir.z * .03 + rand(-.01, .01), sw: rand(-2, 2), s: rand(.002, .005) * Math.max(1, W.Hp * 2), life: 0, max: rand(1.8, 3.4), c: [p.col.r, p.col.g, p.col.b], ph: rand(TAU) }); }
+    if (glow > .5 && Math.random() < rdt * 5) { const p = pick(W.P), v = new THREE.Vector3(p.x, p.y, .002).applyMatrix4(grp.matrixWorld);
+      addP({ k: 2, x: v.x, y: v.y, z: v.z, vx: 0, vy: 0, vz: 0, s: rand(.01, .024) * Math.max(1, W.Hp * 2), life: 0, max: rand(.5, 1), c: [1, 1, 1] }); }
+  }
+  grp.updateMatrixWorld(true);
+  const me = grp.matrixWorld.elements; U.uAX.value.set(me[0], me[1], me[2]).normalize(); U.uAY.value.set(me[4], me[5], me[6]).normalize(); U.uN.value.set(me[8], me[9], me[10]).normalize();
+  U.uTime.value = now * .001; W.cast.material.uniforms.uInv.value.copy(grp.matrixWorld).invert();
+}
+function exitWindow() {
+  // the panel lets go of its pieces where they are, so the rewind can carry each one home
+  const W = WIN; if (!W.mode) return;
+  const tp = new THREE.Vector3(), tq = new THREE.Quaternion();
+  W.grp.updateMatrixWorld(true);
+  for (const p of W.P) { const m = p.s.mesh; m.visible = true;
+    if (W.mode !== 'gather' || p.g.done) { piecePose(p, W.grp, .0012, tp, tq); m.position.copy(tp); m.quaternion.copy(tq); m.morphTargetInfluences[0] = 1; } }
+  for (const o of [W.grp, W.cast, W.halo]) scene.remove(o);
+  W.grp.traverse(o => { if (o.geometry) o.geometry.dispose(); }); W.cast.geometry.dispose(); W.tex.col.dispose(); W.tex.aux.dispose();
+  W.mode = null; W.P = null; W.fadeT = 1; W.spinV = 0; SPIN = null;
+  camGoal.copy(W.saved.target); camFollow = true; VIEW.tEl = W.saved.el; VIEW.tDist = W.saved.dist;
+  cv.style.cursor = '';
+}
+winBtn.addEventListener('click', () => { audioInit(); enterWindow(); });
+
+/* -------------------------------------------------------- pick up and move */
+// a tap swings the hammer; press and move (or press and hold) picks the glass up instead
+let PRESS = null, DRAG = null, SPIN = null;
+function groundAt(cx, cy) { ndc.set(cx / innerWidth * 2 - 1, -(cy / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera); const t = -ray.ray.origin.y / ray.ray.direction.y; return t > 0 ? ray.ray.origin.clone().addScaledVector(ray.ray.direction, t) : null; }
+function grabbable(h) { if (!h || reform || WIN.mode) return false; if (h.obj && !h.obj.broken) return !h.obj.dropping; return !!(h.shard && shards.includes(h.shard)); }
+function pressAt(x, y, id, touch) {
+  const hit = pickAt(x, y); if (!grabbable(hit)) return false;
+  PRESS = { x, y, id, touch, hit, timer: setTimeout(() => { if (PRESS && !DRAG) beginDrag(); }, 260) };
+  return true;
+}
+function cancelPress() { if (PRESS) clearTimeout(PRESS.timer); PRESS = null; }
+function beginDrag() {
+  const p = PRESS; cancelPress(); if (!p) return;
+  const h = p.hit, g0 = groundAt(p.x, p.y); if (!g0) return;
+  if (h.obj && !h.obj.broken && !h.obj.dropping) {
+    const o = h.obj; o.lifted = true;
+    DRAG = { o, id: p.id, ox: o.group.position.x - g0.x, oz: o.group.position.z - g0.z, tx: o.group.position.x, tz: o.group.position.z };
+    // lift a plate and whatever lay on it slides off
+    if (o.def.flat) { hfRebuild(o.wbox); for (const s of statics.slice()) if (s.wbox.intersectsBox(o.wbox) && s.wbox.min.y > .001) { wake(s); s.v.set(rand(-.05, .05), .1, rand(-.05, .05)); } }
+  } else if (h.shard && shards.includes(h.shard)) {
+    const s = h.shard; wake(s); s.drag = true; s.v.set(0, 0, 0); s.w.set(0, 0, 0);
+    DRAG = { s, id: p.id, ox: s.mesh.position.x - g0.x, oz: s.mesh.position.z - g0.z, tx: s.mesh.position.x, tz: s.mesh.position.z, v: new THREE.Vector3() };
+  } else return;
+  HAM.pending = null; HAM.vis = 0; hoverXY = null;
+  cv.style.cursor = 'grabbing';
+  play('glass_land', { gain: .06, rate: rand(1.55, 1.75), pan: panX(DRAG.tx), verb: .5 });
+  if (navigator.vibrate) try { navigator.vibrate(8); } catch (e) { }
+}
+function moveDrag(x, y) {
+  const g = groundAt(x, y); if (!g || !DRAG) return;
+  let tx = clamp(g.x + DRAG.ox, -1.3, 1.3), tz = clamp(g.z + DRAG.oz, -1.2, 1.1);
+  if (DRAG.o) { const o = DRAG.o;
+    // glass doesn't pass through glass: slide around whatever stands in the way
+    for (let it = 0; it < 3; it++) for (const n of objs) { if (n === o || n.broken) continue;
+      const dx = tx - n.x, dz = tz - n.z, d = Math.hypot(dx, dz), m = o.def.R + n.def.R + .006;
+      if (d < m) { const ux = d > 1e-5 ? dx / d : 1, uz = d > 1e-5 ? dz / d : 0; tx = n.x + ux * m; tz = n.z + uz * m; } } }
+  DRAG.tx = tx; DRAG.tz = tz;
+}
+function stepDrag(rdt) {
+  for (const o of objs) {
+    if (o.dropping) { o.dropV -= 6 * rdt; o.group.position.y += o.dropV * rdt;
+      if (o.group.position.y <= 0) { o.group.position.y = 0; o.dropping = false; o.lifted = false; o.wobV.x += rand(-1, 1) * .8; o.wobV.y += rand(-1, 1) * .8;
+        play('glass_land', { gain: .22, rate: o.def.pitch * rand(.97, 1.03), pan: panX(o.x), verb: .4 });
+        if (o.def.flat) { const old = o.wbox.clone(); o.group.updateMatrixWorld(true); o.wtris = worldTris(o.meshes[0].geometry, o.meshes[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRebuild(old.union(o.wbox)); } } }
+    // the shadow and the coloured light stay on the table when the glass is lifted
+    o.contact.position.y = .0004 - o.group.position.y; if (o.caustic) o.caustic.position.y = .0005 - o.group.position.y;
+  }
+  if (!DRAG || rdt <= 0) return;
+  const k = 1 - Math.exp(-rdt * 20);
+  if (DRAG.o) { const o = DRAG.o, g = o.group;
+    const nx = lerp(g.position.x, DRAG.tx, k), nz = lerp(g.position.z, DRAG.tz, k), vx = (nx - g.position.x) / rdt, vz = (nz - g.position.z) / rdt;
+    g.position.x = o.x = nx; g.position.z = o.z = nz; g.position.y = lerp(g.position.y, o.def.flat ? .012 : .022, 1 - Math.exp(-rdt * 12));
+    // it sways against the motion, like something held lightly
+    o.wobV.x -= vx * rdt * 900; o.wobV.y -= vz * rdt * 900; o.wob.x = clamp(o.wob.x, -3, 3); o.wob.y = clamp(o.wob.y, -3, 3);
+  } else { const s = DRAG.s, m = s.mesh;
+    if (!shards.includes(s)) { DRAG = null; cv.style.cursor = ''; return; }
+    const p0 = m.position.clone(), ty = hfAt(DRAG.tx, DRAG.tz) + s.rad + .02;
+    m.position.x = lerp(m.position.x, DRAG.tx, k); m.position.z = lerp(m.position.z, DRAG.tz, k); m.position.y = lerp(m.position.y, ty, 1 - Math.exp(-rdt * 12));
+    const v = m.position.clone().sub(p0).multiplyScalar(1 / rdt); DRAG.v.lerp(v, .35);
+    const ax = new THREE.Vector3(v.z, 0, -v.x), al = ax.length(); if (al > 1e-4) { _q.setFromAxisAngle(ax.multiplyScalar(1 / al), Math.min(al, 2) * rdt * 1.6); m.quaternion.premultiply(_q); }
+  }
+}
+function endDrag() {
+  if (!DRAG) return; const d = DRAG; DRAG = null; cv.style.cursor = WIN.mode ? 'grab' : '';
+  if (d.o) { d.o.dropping = true; d.o.dropV = 0; }
+  else { const s = d.s; s.drag = false; if (d.v.length() > 1.6) d.v.setLength(1.6); s.v.copy(d.v); s.w.set(rand(-4, 4), rand(-4, 4), rand(-4, 4)); s.calmT = 0; s.age = 0; s.bounces = 0; }
+}
+
 /* ------------------------------------------------------------------ input */
 // one finger or a click: the hammer. two fingers, a trackpad swipe or a right-drag: turn the table. pinch: closer.
 let hoverXY = null;
 const cv = renderer.domElement, touches = new Map();
 let tapTimer = null, tapAt = null, gesture = null, rdrag = null;
 function swingAt(x, y, touch) {
-  audioInit(); if (reform) return;
+  audioInit(); if (reform || WIN.mode) return;
   const hit = pickAt(x, y); if (!hit) return;
   if (HAM.pending) strike(HAM.pending);
   HAM.touch = touch; HAM.point.copy(hit.point); HAM.normal.copy(hit.normal);
@@ -1190,19 +1604,26 @@ function gestureState() { const p = [...touches.values()]; return { x: (p[0].x +
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('pointerdown', e => {
   e.preventDefault(); audioInit();
+  // the window: one finger, a click or a drag spins it about its upright axis, and nothing else
+  if (WIN.mode) { if (WIN.mode === 'show' && !SPIN) { SPIN = { id: e.pointerId, x: e.clientX, t: performance.now() }; WIN.spinV = 0; cv.style.cursor = 'grabbing'; try { cv.setPointerCapture(e.pointerId); } catch (er) { } } return; }
   if (e.pointerType === 'mouse') {
     if (e.button === 2) { rdrag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); return; }
-    if (e.button === 0) swingAt(e.clientX, e.clientY, false);
+    if (e.button === 0) { if (pressAt(e.clientX, e.clientY, e.pointerId, false)) { try { cv.setPointerCapture(e.pointerId); } catch (er) { } } else swingAt(e.clientX, e.clientY, false); }
     return;
   }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (touches.size === 1) {
+    if (pressAt(e.clientX, e.clientY, e.pointerId, true)) return;
     // wait a breath to see whether a second finger follows
     tapAt = { x: e.clientX, y: e.clientY };
     clearTimeout(tapTimer); tapTimer = setTimeout(() => { if (touches.size <= 1 && tapAt && !gesture) swingAt(tapAt.x, tapAt.y, true); tapAt = null; }, 70);
-  } else if (touches.size === 2) { clearTimeout(tapTimer); tapAt = null; gesture = gestureState(); }
+  } else if (touches.size === 2) { clearTimeout(tapTimer); tapAt = null; cancelPress(); endDrag(); gesture = gestureState(); }
 });
 addEventListener('pointermove', e => {
+  if (SPIN) { if (e.pointerId !== SPIN.id) return; const now = performance.now(), dx = e.clientX - SPIN.x, d = dx * 7 / Math.max(320, Math.min(innerWidth, 900));
+    WIN.spin += d; WIN.spinV = lerp(WIN.spinV, d / Math.max(.008, (now - SPIN.t) / 1000), .5); SPIN.x = e.clientX; SPIN.t = now; return; }
+  if (PRESS && e.pointerId === PRESS.id && !DRAG && Math.hypot(e.clientX - PRESS.x, e.clientY - PRESS.y) > (PRESS.touch ? 9 : 5)) beginDrag();
+  if (DRAG && e.pointerId === DRAG.id) { moveDrag(e.clientX, e.clientY); return; }
   if (e.pointerType === 'mouse') {
     if (rdrag) { orbit(-(e.clientX - rdrag.x) * .006, (e.clientY - rdrag.y) * .005); rdrag = { x: e.clientX, y: e.clientY }; return; }
     HAM.touch = false; if (e.target !== cv) { hoverXY = null; return; } hoverXY = [e.clientX, e.clientY]; return;
@@ -1212,10 +1633,17 @@ addEventListener('pointermove', e => {
   if (tapAt && Math.hypot(e.clientX - tapAt.x, e.clientY - tapAt.y) > 12) { clearTimeout(tapTimer); tapAt = null; }
   if (touches.size === 2 && gesture) { const g = gestureState(); orbit(-(g.x - gesture.x) * .007, (g.y - gesture.y) * .006, gesture.d / Math.max(20, g.d)); gesture = g; }
 }, { passive: false });
-const endTouch = e => { if (e.pointerType === 'mouse') { if (rdrag) rdrag = null; return; } touches.delete(e.pointerId); if (touches.size < 2) gesture = null; };
+const endTouch = e => {
+  if (SPIN && e.pointerId === SPIN.id) { if (performance.now() - SPIN.t > 90) WIN.spinV = 0; SPIN = null; cv.style.cursor = WIN.mode ? 'grab' : ''; }
+  if (DRAG && e.pointerId === DRAG.id) endDrag();
+  else if (PRESS && e.pointerId === PRESS.id) { const p = PRESS; cancelPress(); if (e.type === 'pointerup') swingAt(p.x, p.y, p.touch); }
+  if (e.pointerType === 'mouse') { if (rdrag) rdrag = null; return; }
+  touches.delete(e.pointerId); if (touches.size < 2) gesture = null;
+};
 addEventListener('pointerup', endTouch); addEventListener('pointercancel', endTouch);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
+  if (WIN.mode) { if (WIN.mode === 'show') WIN.spin -= (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * .005; return; }
   if (e.ctrlKey) orbit(0, 0, Math.exp(e.deltaY * .01));            // trackpad pinch
   else orbit(-e.deltaX * .004, e.deltaY * .0032);                   // two-finger swipe turns the table
 }, { passive: false });
@@ -1229,7 +1657,7 @@ document.getElementById('sound').addEventListener('click', e => { SFX.on = !SFX.
 document.getElementById('reset').addEventListener('click', () => startReform());
 window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, o.broken]), shards: shards.length, statics: statics.length, flying: shards.filter(s => !s.asleep).length }),
   shardScreen: () => { const s = pick(shards); if (!s) return null; const v = s.mesh.position.clone().project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
-  reform: () => startReform(), reforming: () => !!reform, objs: () => objs, THREE,
+  reform: () => startReform(), reforming: () => !!reform, objs: () => objs, THREE, win: () => WIN.mode, enterWindow, dtMax: v => { DT_MAX = v; }, spin: a => { WIN.spin = a; },
   screen: kind => { const o = objs.find(q => q.kind === kind && !q.broken); if (!o) return null; const v = new THREE.Vector3(o.x, o.def.flat ? .015 : o.H * .55, o.z).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; } };
 buildObjects();
 requestAnimationFrame(frame);
