@@ -86,7 +86,7 @@ key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
 key.shadow.camera.left = -1.3; key.shadow.camera.right = 1.3; key.shadow.camera.top = 1.3; key.shadow.camera.bottom = -1.3;
 key.shadow.camera.near = 0.5; key.shadow.camera.far = 6;
-key.shadow.radius = 7; key.shadow.blurSamples = 16; key.shadow.bias = -0.0004;
+key.shadow.radius = 6; key.shadow.blurSamples = 10; key.shadow.bias = -0.0004;
 scene.add(key, key.target);
 const rim = new THREE.DirectionalLight(0xeef3ff, 0.55); rim.position.set(1.6, 1.2, -1.5); scene.add(rim);
 const flash = new THREE.PointLight(0xfff4e6, 0, 0.9, 2); scene.add(flash);
@@ -787,7 +787,7 @@ function footRadius(def) {
 function makeObject(kind) {
   const def = KINDS[kind]();
   const group = new THREE.Group();
-  const o = { kind, def, group, broken: false, glass: !!def.glass, parts: def.parts, x: 0, z: 0, wob: new THREE.Vector2(), wobV: new THREE.Vector2(), appear: 1, H: def.H, landed: false };
+  const o = { family: def.flat ? 'plate' : kind.startsWith('bowl') ? 'bowl' : null, baseY: 0, kind, def, group, broken: false, glass: !!def.glass, parts: def.parts, x: 0, z: 0, wob: new THREE.Vector2(), wobV: new THREE.Vector2(), appear: 1, H: def.H, landed: false };
   const meshes = [];
   def.parts.forEach((part, pi) => {
     part.full = gridTris(part);
@@ -1059,10 +1059,10 @@ function stepShard(s, dt) {
   }
   for (const o of objs) {
     if (o.broken || o.def.flat || !o.landed || o.dissolve) continue;
-    const dx = m.position.x - o.x, dz = m.position.z - o.z; if (dx * dx + dz * dz > (o.def.R + .07) ** 2 || m.position.y > o.H + .03) continue;
+    const by = o.baseY || 0, dx = m.position.x - o.x, dz = m.position.z - o.z; if (dx * dx + dz * dz > (o.def.R + .07) ** 2 || m.position.y > by + o.H + .03) continue;
     for (const p of P) {
-      const px = p.x - o.x, pz = p.z - o.z, d = Math.hypot(px, pz), R = radiusAt(o, p.y);
-      if (p.y < o.H && d < R && d > 1e-5) { const nn = new THREE.Vector3(px / d, 0, pz / d); m.position.addScaledVector(nn, (R - d) * .8); const hv = contact(s, p, nn, .35, .3);
+      const px = p.x - o.x, pz = p.z - o.z, d = Math.hypot(px, pz), R = radiusAt(o, p.y - by);
+      if (p.y - by < o.H && p.y > by && d < R && d > 1e-5) { const nn = new THREE.Vector3(px / d, 0, pz / d); m.position.addScaledVector(nn, (R - d) * .8); const hv = contact(s, p, nn, .35, .3);
         if (hv > .5) { play(o.glass ? 'glass_land' : 'ceramic_land', { gain: clamp(hv / 5, .05, .4), rate: rand(.95, 1.05) * o.def.pitch, pan: panX(o.x), verb: .3 }); o.wobV.x += rand(-1, 1) * hv * .05; o.wobV.y += rand(-1, 1) * hv * .05; } }
     }
   }
@@ -1160,7 +1160,7 @@ function smash(o, hitWorld) {
   o.group.updateMatrixWorld(true);
   const wasAir = !!o.air, objVel = wasAir ? o.air.vel.clone() : new THREE.Vector3();
   o.breakPos = o.group.position.clone(); o.breakQuat = o.group.quaternion.clone();
-  o.broken = true; o.air = null; o.landed = false; root.remove(o.group); o.drop.visible = false;
+  collapse(o); o.broken = true; o.air = null; o.landed = false; root.remove(o.group); o.drop.visible = false;
   const inv = new THREE.Matrix4().copy(o.group.matrixWorld).invert();
   const Il = hitWorld.clone().applyMatrix4(inv), I = [Il.x, Il.y, Il.z];
   const cands = [];
@@ -1191,7 +1191,7 @@ function smash(o, hitWorld) {
     if (d < .26) play(n.glass ? 'glass_land' : 'ceramic_land', { gain: .2 * (1 - d / .26), rate: n.def.pitch * rand(.97, 1.03), pan: panX(n.x), delay: rand(.03, .09), verb: .3 }); } }
   if (navigator.vibrate) try { navigator.vibrate(glassy ? [12, 24, 8] : 26); } catch (e) { }
   if (o.def.flat && o.wbox) { const b = o.wbox; o.wbox = null; hfRebuild(b); }
-  if (wasAir) { TOSS.combo++; chime(TOSS.combo); TOSS.timer = Math.min(TOSS.timer, rand(.45, .7)); }
+  if (wasAir) { TOSS.combo++; TOSS.timer = Math.min(TOSS.timer, rand(.45, .7)); }
 }
 function breakShard(s, hitWorld, power) {
   const o = s.obj, part = o.parts[s.pi];
@@ -1292,7 +1292,41 @@ const TOSS = { bag: [], timer: 1.1, combo: 0 };
 const smoother = t => t * t * t * (t * (t * 6 - 15) + 10);
 function nextKind() { if (!TOSS.bag.length) { TOSS.bag = Object.keys(KINDS); for (let i = TOSS.bag.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [TOSS.bag[i], TOSS.bag[j]] = [TOSS.bag[j], TOSS.bag[i]]; } } return TOSS.bag.pop(); }
 const landedCap = () => innerWidth / innerHeight < .9 ? 6 : 8;
-function spotFor(o) {
+// like things settle on like things: plates on plates, a smaller bowl nests in a bigger one
+const alive = q => q && !q.broken && !q.dissolve;
+function stackY(o, base) {
+  const b = base.landed ? (base.baseY || 0) : base.air.land.y;
+  if (o.family === 'plate') return b + .0078;
+  return o.def.R < base.def.R * .9 ? b + base.H * .3 : b + base.H * .84;
+}
+function stackBase(o, prefer) {
+  if (!o.family) return null;
+  const c = objs.filter(q => q !== o && alive(q) && (q.landed || (q.air && q.air.gentle && !q.air.drop)) && q.family === o.family && !alive(q.above) && (q.depth || 0) < 4 && o.def.R <= q.def.R * 1.12 + .004);
+  if (!c.length) return null;
+  if (prefer) { const p = o.group.position; c.sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z)); return c[0]; }
+  return pick(c);
+}
+function landOn(o, base) {
+  const bx = base.landed ? base.x : base.air.land.x, bz = base.landed ? base.z : base.air.land.z;
+  const v = new THREE.Vector3(bx + rand(-.003, .003), stackY(o, base), bz + rand(-.003, .003)); v.on = base; v.clear = 1; base.above = o; return v;
+}
+// take something out of a stack and everything above it comes down a level, one after another
+function collapse(o) {
+  let below = alive(o.below) ? o.below : null, y = o.baseY || 0, a = o.above, k = 0;
+  if (o.below && o.below.above === o) o.below.above = null;
+  o.above = null; o.below = null;
+  while (alive(a)) {
+    const next = a.above;
+    a.landed = false; a.below = null; a.above = null;
+    if (a.def.flat && a.wbox) { const b = a.wbox; a.wbox = null; hfRebuild(b); }
+    const land = below ? landOn(a, below) : new THREE.Vector3(a.x, 0, a.z);
+    if (!below) land.clear = 1;
+    a.air = { phase: 'float', t: -k * .08, apex: a.group.position.clone(), land, qFrom: a.group.quaternion.clone(), yaw: a.yaw || 0, floatDur: .55, swayA: .004, swayF: 1, ph: 0, rockA: .05, prev: a.group.position.clone(), vel: new THREE.Vector3(), gentle: true, drop: true };
+    below = a; a = next; k++;
+  }
+}
+function spotFor(o, prefer) {
+  const base = stackBase(o, prefer); if (base && (prefer || Math.random() < .3)) return landOn(o, base);
   const A = tableArea(), R = o.def.R + (o.def.extraR || 0) * .5;
   let best = null, bs = -1e9;
   for (let k = 0; k < 70; k++) {
@@ -1306,13 +1340,13 @@ function spotFor(o) {
   return best;
 }
 function makeRoom() {
-  const standing = objs.filter(q => q.landed && !q.broken && !q.dissolve).sort((a, b) => a.landedAt - b.landedAt);
+  const standing = objs.filter(q => q.landed && !q.broken && !q.dissolve && !alive(q.below)).sort((a, b) => a.landedAt - b.landedAt);
   while (standing.length >= landedCap()) dissolve(standing.shift());
 }
 function launch() {
   makeRoom();
   const o = makeObject(nextKind());
-  const land = spotFor(o); if (land.clear < 0) { const s0 = objs.filter(q => q.landed && !q.broken && !q.dissolve).sort((a, b) => a.landedAt - b.landedAt)[0]; if (s0) dissolve(s0); }
+  const land = spotFor(o, false); if (land.clear < 0) { const s0 = objs.filter(q => q.landed && !q.broken && !q.dissolve).sort((a, b) => a.landedAt - b.landedAt)[0]; if (s0) dissolve(s0); }
   // start just below the bottom of the frame, in front of where it will land
   const toward = new THREE.Vector3(camera.position.x - camTarget.x, 0, camera.position.z - camTarget.z).normalize();
   const start = land.clone(); start.x += rand(-.12, .12);
@@ -1321,21 +1355,27 @@ function launch() {
   const apex = land.clone().lerp(start, .2); apex.x += rand(-.05, .05);
   apex.y = rand(.24, .32) + (o.def.flat ? .04 : 0) - Math.min(.08, o.def.H * .2);
   const yaw = rand(TAU), axis = o.def.flat ? UP.clone() : new THREE.Vector3(rand(-1, 1), rand(-.3, .3), rand(-1, 1)).normalize();
-  o.air = { phase: 'rise', t: 0, start, apex, land, yaw, axis, spin: rand(2.2, 3.6) * (Math.random() < .5 ? -1 : 1), riseDur: rand(.85, 1.0), floatDur: rand(3.3, 4.2) * (o.def.flat ? 1.12 : 1),
+  o.air = { phase: 'rise', t: 0, start, apex, land, yaw, axis, turn: (o.def.flat ? rand(1.4, 2.6) : TAU) * (Math.random() < .5 ? -1 : 1), riseDur: rand(.68, .8), floatDur: rand(1.6, 2.0) * (o.def.flat ? 1.1 : 1),
     swayA: rand(.025, .045), swayF: rand(1.3, 1.9), ph: rand(TAU), rockA: o.def.flat ? rand(.14, .2) : rand(.16, .24), prev: start.clone(), vel: new THREE.Vector3() };
   o.yaw = yaw; root.add(o.group); objs.push(o); placeAir(o, 0);
   whoosh();
 }
 function driftDown(o) {
-  // something made whole again floats down from where it broke
-  const land = spotFor(o);
-  o.air = { phase: 'float', t: 0, apex: o.group.position.clone(), land, qFrom: o.group.quaternion.clone(), yaw: o.yaw || 0, floatDur: rand(2.4, 3), swayA: rand(.015, .03), swayF: rand(1.2, 1.6), ph: rand(TAU), rockA: o.def.flat ? .3 : .15, prev: o.group.position.clone(), vel: new THREE.Vector3(), gentle: true };
+  // something made whole again floats down from where it broke, and settles with its own kind
+  const land = spotFor(o, true), under = land.on && land.on.air ? land.on.air : null;
+  o.air = { phase: 'float', t: 0, apex: o.group.position.clone(), land, qFrom: o.group.quaternion.clone(), yaw: o.yaw || 0, floatDur: Math.max(rand(1.4, 1.7), under ? under.floatDur - under.t + .35 : 0), swayA: rand(.015, .03), swayF: rand(1.2, 1.6), ph: rand(TAU), rockA: o.def.flat ? .3 : .15, prev: o.group.position.clone(), vel: new THREE.Vector3(), gentle: true };
 }
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _qy = new THREE.Quaternion(), _side = new THREE.Vector3();
 const _qt = new THREE.Quaternion(), _tAx = new THREE.Vector3();
 function faceTilt(ang) { // plates lean their painted face toward you
   _tAx.set(camera.position.x - camTarget.x, 0, camera.position.z - camTarget.z).normalize(); _tAx.crossVectors(UP, _tAx).normalize();
   return _qt.setFromAxisAngle(_tAx, ang);
+}
+// thrown with a spin that slows smoothly and finishes on a whole turn, so it arrives upright without a snap
+const _qs = new THREE.Quaternion();
+function tumble(a) {
+  const T = clamp(a.T / (a.riseDur + a.floatDur * .85), 0, 1);
+  return _qs.setFromAxisAngle(a.axis, a.turn * (1 - Math.pow(1 - T, 2.6)));
 }
 function placeAir(o, dt) {
   const a = o.air, g = o.group, flat = o.def.flat;
@@ -1344,15 +1384,15 @@ function placeAir(o, dt) {
     const u = clamp(a.t / a.riseDur, 0, 1), e = 1 - Math.pow(1 - u, 2.2), m = 1 - e;
     const cx = (a.start.x + a.apex.x) / 2, cz = (a.start.z + a.apex.z) / 2, cy = a.apex.y * 1.25;
     g.position.set(m * m * a.start.x + 2 * m * e * cx + e * e * a.apex.x, m * m * a.start.y + 2 * m * e * cy + e * e * a.apex.y, m * m * a.start.z + 2 * m * e * cz + e * e * a.apex.z);
-    _qa.setFromAxisAngle(a.axis, a.spin * e); g.quaternion.copy(_qy).multiply(_qa); if (flat) g.quaternion.premultiply(faceTilt(.62 * e));
+    g.quaternion.copy(_qy).multiply(tumble(a)); if (flat) g.quaternion.premultiply(faceTilt(.62 * e));
     if (u >= 1) { a.phase = 'float'; a.t = 0; a.qFrom = g.quaternion.clone(); for (let i = 0; i < 6; i++) addP({ k: 2, x: g.position.x + rand(-.04, .04), y: g.position.y + rand(-.02, .06), z: g.position.z + rand(-.04, .04), vx: 0, vy: 0, vz: 0, s: rand(.008, .018), life: -rand(0, .3), max: rand(.4, .8), c: [1, 1, 1] }); }
   } else {
-    const u = clamp(a.t / a.floatDur, 0, 1), fy = smoother(u), fh = u * u * (3 - 2 * u);
+    const u = clamp(a.t / a.floatDur, 0, 1), fy = u * u * (3 - 2 * u), fh = u * u * (3 - 2 * u);
     _side.set(a.land.x - a.apex.x, 0, a.land.z - a.apex.z); if (_side.lengthSq() < 1e-6) _side.set(1, 0, 0); _side.normalize().set(-_side.z, 0, _side.x);
     const sw = Math.sin(u * Math.PI * a.swayF * 2 + a.ph) * a.swayA * Math.pow(1 - u, 1.1);
-    g.position.set(lerp(a.apex.x, a.land.x, fh) + _side.x * sw, lerp(a.apex.y, 0, fy), lerp(a.apex.z, a.land.z, fh) + _side.z * sw);
+    g.position.set(lerp(a.apex.x, a.land.x, fh) + _side.x * sw, lerp(a.apex.y, a.land.y, fy), lerp(a.apex.z, a.land.z, fh) + _side.z * sw);
     _qb.copy(_qy); if (flat) _qb.premultiply(faceTilt(.62 * (1 - smoother(clamp((u - .5) / .5, 0, 1)))));
-    _qa.copy(a.qFrom).slerp(_qb, easeOut(Math.min(1, u * 1.7)));
+    if (a.axis) _qa.copy(_qb).multiply(tumble(a)); else { const k = Math.min(1, u * 1.4); _qa.copy(a.qFrom).slerp(_qb, k * k * (3 - 2 * k)); }
     _qb.setFromAxisAngle(_side, Math.sin(u * Math.PI * a.swayF * 2 + a.ph + 1.3) * a.rockA * Math.pow(1 - u, 1.3));
     g.quaternion.copy(_qb).multiply(_qa);
     if (u >= 1) { landObject(o); return; }
@@ -1366,28 +1406,29 @@ function landObject(o) {
   const a = o.air, g = o.group;
   g.position.copy(a.land); g.quaternion.setFromAxisAngle(UP, a.yaw); o.yaw = a.yaw;
   o.air = null; o.landed = true; o.landedAt = performance.now(); o.x = a.land.x; o.z = a.land.z; o.drop.visible = false;
+  o.baseY = a.land.y; o.below = a.land.on || null; o.depth = o.below ? (o.below.depth || 0) + 1 : 0; if (o.below) o.below.above = o;
   o.contact.visible = true; o.contactFade = 0; if (o.caustic) o.caustic.visible = true;
   o.wobV.set(rand(-1, 1) * .8, rand(-1, 1) * .8);
   g.updateMatrixWorld(true);
   if (o.def.flat) { o.wtris = worldTris(o.meshes[0].geometry, o.meshes[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
-  play(o.glass ? 'glass_land' : 'ceramic_land', { gain: a.gentle ? .18 : .26, rate: o.def.pitch * rand(.96, 1.02), pan: panX(o.x), verb: .5 });
-  for (let i = 0; i < 12; i++) { const ang = rand(TAU), r = o.def.R * rand(.9, 1.2); addP({ k: 0, x: o.x + Math.cos(ang) * r, y: .004, z: o.z + Math.sin(ang) * r, vx: Math.cos(ang) * .04, vy: rand(.02, .06), vz: Math.sin(ang) * .04, sw: rand(-2, 2), s: rand(.002, .004), life: 0, max: rand(.6, 1.1), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
+  play(o.glass ? 'glass_land' : 'ceramic_land', { gain: a.drop ? .14 : a.gentle ? .18 : .26, rate: o.def.pitch * rand(.96, 1.02), pan: panX(o.x), verb: .5 });
+  for (let i = 0; i < (a.drop ? 0 : 12); i++) { const ang = rand(TAU), r = o.def.R * rand(.9, 1.2); addP({ k: 0, x: o.x + Math.cos(ang) * r, y: o.baseY + .004, z: o.z + Math.sin(ang) * r, vx: Math.cos(ang) * .04, vy: rand(.02, .06), vz: Math.sin(ang) * .04, sw: rand(-2, 2), s: rand(.002, .004), life: 0, max: rand(.6, 1.1), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
   if (!a.gentle) { TOSS.combo = 0; TOSS.timer = Math.min(TOSS.timer, rand(.3, .5)); }
 }
 function dissolve(o) {
   if (o.dissolve) return;
-  o.dissolve = { t: 0 }; o.landed = false; o.drop.visible = false;
+  o.dissolve = { t: 0 }; o.landed = false; o.drop.visible = false; collapse(o);
   if (o.def.flat && o.wbox) { const b = o.wbox; o.wbox = null; hfRebuild(b); }
 }
 function stepObjects(dt, rdt) {
   for (let i = objs.length - 1; i >= 0; i--) {
     const o = objs[i];
-    if (o.air && !o.broken) { o.air.t += dt; placeAir(o, dt); }
+    if (o.air && !o.broken) { o.air.t += dt; o.air.T = (o.air.T || 0) + dt; placeAir(o, dt); }
     if (o.contactFade !== undefined && o.contactFade < 1) { o.contactFade = Math.min(1, o.contactFade + rdt / .35); o.contact.material.opacity = o.contactA * o.contactFade; if (o.causticM) o.causticM.material.opacity = o.contactFade; }
     if (o.dissolve) {
       // breathed away into light
       const d = o.dissolve; d.t += rdt; const u = clamp(d.t / .85, 0, 1), sc = 1 - u * u * u;
-      o.group.scale.setScalar(Math.max(.001, sc)); o.group.position.y = .03 * easeOut(u);
+      o.group.scale.setScalar(Math.max(.001, sc)); o.group.position.y = (o.baseY || 0) + .03 * easeOut(u);
       if (Math.random() < .7) { const c = o.group.position; addP({ k: 0, x: c.x + rand(-1, 1) * o.def.R, y: c.y + rand(0, o.def.H), z: c.z + rand(-1, 1) * o.def.R, vx: rand(-.03, .03), vy: rand(.05, .15), vz: rand(-.03, .03), sw: rand(-3, 3), s: rand(.002, .005), life: 0, max: rand(.8, 1.4), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
       if (u >= 1) { root.remove(o.group); root.remove(o.drop); objs.splice(i, 1); }
     }
@@ -1484,8 +1525,20 @@ function stepReform(rdt) {
 
 /* ------------------------------------------------------------------- loop */
 let last = performance.now(), glintT = 0;
+// keep the frame rate up: step the render resolution down when frames run long, back up when there is room
+const FT = { ema: 1 / 60, pr: DPR, t: 0 };
+function adaptQuality(now) {
+  if (now - FT.t < 1500) return; FT.t = now;
+  let pr = FT.pr;
+  if (FT.ema > 1 / 45 && pr > 1) pr = Math.max(1, pr - .25);
+  else if (FT.ema < 1 / 57 && pr < DPR) pr = Math.min(DPR, pr + .25);
+  if (pr !== FT.pr) { FT.pr = pr; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * pr * .5; }
+}
 function frame(now) {
-  const rdt = Math.min(.05, (now - last) / 1000); last = now;
+  const raw = Math.min(.05, (now - last) / 1000); last = now;
+  FT.ema = FT.ema * .9 + raw * .1;
+  const rdt = clamp(raw, FT.ema * .6, FT.ema * 1.6);
+  adaptQuality(now);
   let ts = 1;
   if (freezeT > 0) { freezeT -= rdt; ts = .02; } else if (slowT > 0) { slowT -= rdt; const u = 1 - slowT / slowDur; ts = lerp(slowMin, 1, u * u); }
   const dt = rdt * ts;
@@ -1497,7 +1550,7 @@ function frame(now) {
   for (let k = 0; k < sub; k++) for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; if (s.asleep) continue; if (stepShard(s, h)) settle(s); }
   for (const o of objs) if (o.staticDirty) { o.staticT = (o.staticT || 0) + rdt; const moving = shards.some(s => !s.asleep && s.obj === o); if (o.staticT > .35 || !moving) rebuildStatic(o); }
   stepReform(rdt);
-  stepObjects(dt, rdt);
+  stepObjects(rdt * lerp(1, ts, .5), rdt);
   crumbs.step(dt); stepParticles(dt, rdt); stepRings(dt);
   if (flash.intensity > 0) flash.intensity = Math.max(0, flash.intensity * Math.exp(-rdt * 18) - .01);
   glintT -= rdt;
@@ -1512,7 +1565,13 @@ function frame(now) {
   // while the view is turning the table slides under a still pointer: rest the hammer, aim again once it settles
   const turning = now - (VIEW.lastOrbit || -1e9) < 220 || Math.abs(VIEW.tAz - VIEW.az) + Math.abs(VIEW.tEl - VIEW.el) + Math.abs(VIEW.tDist - VIEW.dist) / VIEW.fit > .004;
   if (!HAM.touch) {
-    if (hoverXY && !turning) { if (HAM.t > .12) { const h = pickAt(hoverXY[0], hoverXY[1]); if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); } } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
+    if (hoverXY && !turning) { if (HAM.t > .12) {
+        HOV.n++;
+        const moved = !HOV.xy || HOV.xy[0] !== hoverXY[0] || HOV.xy[1] !== hoverXY[1];
+        if (moved || HOV.n % 3 === 0 || !HOV.obj) { const h = pickAt(hoverXY[0], hoverXY[1]); HOV.xy = hoverXY.slice();
+          if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); HOV.obj = h.obj && h.obj.air ? h.obj : null; if (HOV.obj) { HOV.obj.group.updateMatrixWorld(true); HOV.local = HOV.obj.group.worldToLocal(h.point.clone()); } } }
+        else if (HOV.obj && HOV.obj.air && !HOV.obj.broken) { HOV.obj.group.updateMatrixWorld(true); HAM.point.copy(HOV.obj.group.localToWorld(HOV.local.clone())); }
+      } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
     else HAM.vis = Math.max(0, HAM.vis - rdt * 10);
   }
   hammerUpdate(rdt);
@@ -1523,6 +1582,7 @@ function frame(now) {
 /* ------------------------------------------------------------------ input */
 // one finger or a click: the hammer. two fingers, a trackpad swipe or a right-drag: turn the table. pinch: closer.
 let hoverXY = null;
+const HOV = { n: 0, xy: null, obj: null, local: null };
 const cv = renderer.domElement, touches = new Map();
 let tapTimer = null, tapAt = null, gesture = null, rdrag = null;
 function swingAt(x, y, touch) {
@@ -1568,7 +1628,7 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 document.addEventListener('mouseleave', () => { if (!HAM.touch) { HAM.vis = 0; hoverXY = null; } });
 addEventListener('resize', () => {
-  renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * DPR * .5;
+  renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * FT.pr * .5;
   fitCamera(false);
 });
 document.getElementById('sound').addEventListener('click', e => { SFX.on = !SFX.on; e.currentTarget.setAttribute('aria-pressed', SFX.on); audioInit(); });
@@ -1577,7 +1637,7 @@ window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, 
   shardScreen: () => { const s = pick(shards); if (!s) return null; const v = s.mesh.position.clone().project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
   reform: () => startReform(), reforming: () => !!reform,
   air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase]; },
-  combo: () => TOSS.combo };
+  combo: () => TOSS.combo, queue: k => { TOSS.bag.push(...k); } };
 clearTable();
 requestAnimationFrame(frame);
 requestAnimationFrame(() => document.getElementById('veil').classList.add('gone'));
