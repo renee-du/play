@@ -1493,7 +1493,8 @@ function enterWindow() {
   W.yaw = yaw; W.C = new THREE.Vector3(cx, 0, cz);
   W.floatY = Math.max(.05, Hp * .2) + Hp / 2;
   // the sun is far away, so its rays arrive parallel: low (30 degrees) and from behind the window off to one side, so the rays cross the view at a slant
-  const sunEl = 30 * Math.PI / 180, sunAz = W.yaw + 1.1; W.sunDir = new THREE.Vector3(-Math.sin(sunAz) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(sunAz) * Math.cos(sunEl));
+  // on a tall phone screen the sun stands higher, so its light lands below the pane, in view
+  const sunEl = (camera.aspect < .9 ? 52 : 30) * Math.PI / 180, sunAz = W.yaw + 1.1; W.sunDir = new THREE.Vector3(-Math.sin(sunAz) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(sunAz) * Math.cos(sunEl));
   W.light = W.sunDir.clone().multiplyScalar(80).add(new THREE.Vector3(W.C.x, W.floatY, W.C.z));
   // the panel itself
   const grp = new THREE.Group(); grp.rotation.order = 'YXZ'; grp.position.set(W.C.x, .0022, W.C.z); grp.rotation.set(-Math.PI / 2, W.yaw, 0);
