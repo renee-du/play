@@ -637,9 +637,16 @@ function radiusAt(o, y) {
 /* ------------------------------------------------------------- camera */
 const camTarget = new THREE.Vector3();
 const VIEW = { az: 0, el: .63, dist: 2, fit: 2, tAz: 0, tEl: .63, tDist: 2, baseEl: .63 };
+let LEVEL = 0;   // 0..1: how far the lens is levelled (shifted rather than tilted) so upright edges stay upright
 function placeCamera(az, el, dist) {
   camera.position.set(camTarget.x + Math.sin(az) * Math.cos(el) * dist, camTarget.y + Math.sin(el) * dist, camTarget.z + Math.cos(az) * Math.cos(el) * dist);
-  camera.lookAt(camTarget); camera.updateMatrixWorld();
+  if (LEVEL > 1e-3) {
+    // like an architect's shift lens: the camera looks level and the frame slides down instead, so verticals do not converge
+    const a = el * LEVEL; camera.lookAt(camTarget.x, camTarget.y + (Math.sin(el) - Math.tan(el - a) * Math.cos(el)) * dist, camTarget.z);
+    const off = Math.tan(a) / Math.tan(camera.fov * Math.PI / 360) / 2 * innerHeight;
+    camera.setViewOffset(innerWidth, innerHeight, 0, off, innerWidth, innerHeight);
+  } else { camera.lookAt(camTarget); if (camera.view && camera.view.enabled) camera.clearViewOffset(); }
+  camera.updateMatrixWorld();
 }
 function fitCamera(resetView = true) {
   const tall = innerWidth / innerHeight < .9;
@@ -1258,12 +1265,17 @@ function layoutPanel(P, X, Y) {
     if (!out.length) out.push(0, 0); return out;
   };
   const fits = (m, cx, cy) => { for (let i = 0; i < m.length; i += 2) { const x = cx + m[i], y = cy + m[i + 1]; if (x < 0 || y < 0 || x >= nx || y >= ny || occ[y * nx + x]) return false; } return true; };
-  for (const p of P.slice().sort((a, b) => b.area - a.area)) {
-    const x = clamp(((p.lx - x0) / pw - .5) * Wp * .94, -Wp / 2, Wp / 2), y = clamp(((p.ly - y0) / ph - .5) * Hp * .94, -Hp / 2, Hp / 2);
+  const sc = Math.min(Wp * .94 / pw, Hp * .94 / ph), mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  // pieces nearest the middle of the pile are placed first, then outward, so each lands beside the neighbours it lay beside
+  for (const p of P.slice().sort((a, b) => Math.hypot(a.lx - mx, a.ly - my) - Math.hypot(b.lx - mx, b.ly - my))) {
+    const x = clamp((p.lx - mx) * sc, -Wp / 2, Wp / 2), y = clamp((p.ly - my) * sc, -Hp / 2, Hp / 2);
     p.tx = x; p.ty = y;
-    const t = p.thLay, ths = [t, t + .3, t - .3, t + .65, t - .65, t + Math.PI], masks = ths.map(a => maskOf(p, a));
+    // turned exactly the way it lay; a slight turn only if it cannot fit nearby otherwise
+    const t = p.thLay, ths = [t, t + .12, t - .12, t + .25, t - .25], masks = ths.map(a => maskOf(p, a));
     const tcx = clamp(Math.floor((x + Wp / 2) / c), 0, nx - 1), tcy = clamp(Math.floor((y + Hp / 2) / c), 0, ny - 1);
-    let best = null;
+    let best = null; const near = Math.round(SP.length * .02) & ~1;
+    for (let k = 0; k < near && !best; k += 2) { const cx = tcx + SP[k], cy = tcy + SP[k + 1]; if (cx < 0 || cy < 0 || cx >= nx || cy >= ny || occ[cy * nx + cx]) continue;
+      if (fits(masks[0], cx, cy)) best = [cx, cy, 0]; }
     for (let k = 0; k < SP.length && !best; k += 2) { const cx = tcx + SP[k], cy = tcy + SP[k + 1]; if (cx < 0 || cy < 0 || cx >= nx || cy >= ny || occ[cy * nx + cx]) continue;
       for (let r = 0; r < ths.length; r++) if (fits(masks[r], cx, cy)) { best = [cx, cy, r]; break; } }
     if (!best) best = [tcx, tcy, 0];
@@ -1491,12 +1503,12 @@ function enterWindow() {
     p.wx = m.position.x; p.wz = m.position.z; cx += m.position.x * p.area; cz += m.position.z * p.area; wsum += p.area; }
   cx /= wsum; cz /= wsum; for (const p of P) { p.wx -= cx; p.wz -= cz; }
   const { Wp, Hp } = layoutPanel(P, X, Y), tex = panelTextures(P, Wp, Hp);
-  const W = WIN; W.P = P; W.Wp = Wp; W.Hp = Hp; W.tex = tex; W.mode = 'gather'; W.t = 0; W.spin = -.75; W.spinV = 0; W.fadeT = 0; W.chimeA = 0;
+  const W = WIN; W.P = P; W.Wp = Wp; W.Hp = Hp; W.tex = tex; W.mode = 'gather'; W.t = 0; W.spin = 0; W.spinV = 0; W.fadeT = 0; W.chimeA = 0;
   W.saved = { target: camTarget.clone(), el: VIEW.tEl, dist: VIEW.tDist };
   W.yaw = yaw; W.C = new THREE.Vector3(cx, 0, cz);
   W.floatY = Math.max(.05, Hp * .2) + Hp / 2;
   // the sun is far away, so its rays arrive parallel: low (30 degrees) and from behind the window off to one side, so the rays cross the view at a slant
-  const sunEl = 30 * Math.PI / 180, sunAz = W.yaw + 1.45; W.sunDir = new THREE.Vector3(-Math.sin(sunAz) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(sunAz) * Math.cos(sunEl));
+  const sunEl = 30 * Math.PI / 180, sunAz = W.yaw + 1.1; W.sunDir = new THREE.Vector3(-Math.sin(sunAz) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(sunAz) * Math.cos(sunEl));
   W.light = W.sunDir.clone().multiplyScalar(80).add(new THREE.Vector3(W.C.x, W.floatY, W.C.z));
   // the panel itself
   const grp = new THREE.Group(); grp.rotation.order = 'YXZ'; grp.position.set(W.C.x, .0022, W.C.z); grp.rotation.set(-Math.PI / 2, W.yaw, 0);
@@ -1535,7 +1547,7 @@ function enterWindow() {
   Object.assign(W, { grp, panel, aura, edges, edgeMat: fm, beams, U, cast, halo, land });
   // each piece flies to its place, the heart of the rose first
   const tp = new THREE.Vector3(), tq = new THREE.Quaternion();
-  for (const p of P) { const m = p.s.mesh; p.sx = p.tx * 1.22; p.sy = p.ty * 1.22; p.sth = p.thLay; piecePose(p, grp, .0012, tp, tq, p.sx, p.sy, p.sth);
+  for (const p of P) { const m = p.s.mesh; p.sx = p.lx; p.sy = p.ly; p.sth = p.thLay; piecePose(p, grp, .0012, tp, tq, p.sx, p.sy, p.sth);
     const from = m.position.clone(), d = from.distanceTo(tp), midP = from.clone().lerp(tp, .5); midP.y = Math.max(from.y, tp.y) + .06 + d * .35 + rand(0, .05);
     p.g = { from, mid: midP, to: tp.clone(), q0: m.quaternion.clone(), q1: tq.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 6) * (Math.random() < .5 ? -1 : 1),
       delay: rand(0, .3), dur: rand(.6, .8) + Math.min(.35, d * .3), done: false }; }
@@ -1550,7 +1562,7 @@ function stepWindow(rdt, now) {
   if (Math.abs(W.fadeT - W.fade) > 1e-4) { W.fade += (W.fadeT - W.fade) * (1 - Math.exp(-rdt * 4)); if (Math.abs(W.fadeT - W.fade) < .002) W.fade = W.fadeT; applyFade(W.fade); }
   // while the window is up the room falls into soft shade, so the sun through the glass can be brighter than it
   const dimT = W.mode === 'rise' || W.mode === 'show' ? W.U.uGlow.value : 0; W.dim = lerp(W.dim || 0, dimT, 1 - Math.exp(-rdt * 2.5));
-  scene.background.lerpColors(WHITE, DUSK, W.dim);
+  scene.background.lerpColors(WHITE, DUSK, W.dim); LEVEL = W.dim;
   if (camFollow) { camTarget.lerp(camGoal, 1 - Math.exp(-rdt * 4.5)); if (!W.mode && camTarget.distanceTo(camGoal) < 1e-4) camFollow = false; }
   if (!W.mode) return;
   W.t += rdt; const U = W.U, grp = W.grp;
@@ -1579,7 +1591,7 @@ function stepWindow(rdt, now) {
     W.edgeMat.userData.fade.value = U.uLead.value; W.edges.visible = U.uLead.value > 0;
     if (u >= .8) { W.mode = 'rise'; W.t = 0; W.beams.visible = true;
       // frame the window and the light it casts together
-      camGoal.copy(W.C).lerp(W.land, .4); camGoal.y = W.floatY - W.Hp * .35; VIEW.tEl = .34; VIEW.tDist = fitDist(W.Wp, W.Hp) * 1.45;
+      camGoal.copy(W.C).lerp(W.land, .1); camGoal.y = W.floatY - W.Hp * .2; VIEW.tEl = .34; VIEW.tDist = fitDist(W.Wp, W.Hp) * 1.45;
       [0, 1, 2, 3, 4].forEach(i => play('glass_land', { gain: .07, rate: [1.5, 1.68, 1.89, 2, 2.25][i], verb: 1, delay: .5 + i * .16 })); }
   } else {
     // the fusing finishes as it lifts
@@ -1589,7 +1601,7 @@ function stepWindow(rdt, now) {
     if (!SPIN) { W.spin += W.spinV * rdt; W.spinV *= Math.exp(-rdt * 1.8); }
     const bob = Math.sin(now * .0011) * W.Hp * .012 * e;
     grp.position.y = lerp(.0022, W.floatY, easeOut(clamp(u * 1.15, 0, 1))) + bob;
-    grp.rotation.set(lerp(-Math.PI / 2, 0, smooth01(u * 1.1 - .05)), W.yaw + W.spin, Math.sin(now * .0007) * .012 * e);
+    grp.rotation.set(lerp(-Math.PI / 2, 0, smooth01(u * 1.1 - .05)), W.yaw + W.spin, 0);
     const glow = smooth01((u - .25) / .75); U.uGlow.value = glow; W.cast.material.uniforms.uStr.value = glow; W.aura.material.uniforms.uStr.value = glow * .22; W.halo.visible = false;
     // when the panel turns to face straight into the light, a small chime
     const face = Math.cos(W.spin); if (W.mode === 'show' && face > .985 && W.chimeA <= .985 && Math.abs(W.spinV) > .2) play('glass_land', { gain: .05, rate: 2, verb: 1 }); W.chimeA = face;
