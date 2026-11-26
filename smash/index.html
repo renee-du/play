@@ -851,6 +851,15 @@ function fitCamera(resetView = true) {
   if (resetView) { VIEW.az = VIEW.tAz = 0; VIEW.el = VIEW.tEl = el; VIEW.dist = VIEW.tDist = hi; }
   placeCamera(VIEW.az, VIEW.el, VIEW.dist);
 }
+function keepInView() {
+  const pts = [];
+  for (const o of objs) { if (!o.landed || !alive(o)) continue; const R = o.def.R + .02, y = (o.baseY || 0) + o.H; pts.push(new THREE.Vector3(o.x - R, 0, o.z - R), new THREE.Vector3(o.x + R, y, o.z + R), new THREE.Vector3(o.x - R, y, o.z + R), new THREE.Vector3(o.x + R, 0, o.z - R)); }
+  if (!pts.length) return;
+  let d = VIEW.fit;
+  for (let it = 0; it < 30; it++) { placeCamera(VIEW.baseAz ?? 0, VIEW.baseEl, d); if (pts.every(c => { const p = c.clone().project(camera); return Math.abs(p.x) < .94 && p.y < .9 && p.y > -.93; })) break; d *= 1.04; }
+  placeCamera(VIEW.az, VIEW.el, VIEW.dist);
+  if (d > VIEW.fit * 1.001) { const k = d / VIEW.fit; VIEW.fit = d; VIEW.tDist = Math.min(VIEW.tDist * k, VIEW.fit * 1.6); }
+}
 function orbit(dAz, dEl, zoom = 1) {
   VIEW.lastOrbit = performance.now();
   VIEW.tAz += dAz; VIEW.tEl = clamp(VIEW.tEl + dEl, .1, 1.5); VIEW.tDist = clamp(VIEW.tDist * zoom, VIEW.fit * .35, VIEW.fit * 1.6);
@@ -1300,6 +1309,7 @@ const landedCap = () => innerWidth / innerHeight < .9 ? 6 : 8;
 const alive = q => q && !q.broken && !q.dissolve;
 function stackY(o, base) {
   const b = base.landed ? (base.baseY || 0) : base.air.land.y;
+  if (base.family === 'plate' && o.family !== 'plate') return b + .0058;
   if (o.family === 'plate') return b + .0078;
   return o.def.R < base.def.R * .9 ? b + base.H * .3 : b + base.H * .84;
 }
@@ -1309,6 +1319,12 @@ function stackBase(o, prefer) {
   if (!c.length) return null;
   if (prefer) { const p = o.group.position; c.sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z)); return c[0]; }
   return pick(c);
+}
+function carrierBase(o) {
+  if (o.family === 'plate') return null;
+  const fr = footRadius(o.def);
+  const c = objs.filter(q => q !== o && alive(q) && q.landed && q.family === 'plate' && !alive(q.above) && q.def.R * .7 >= fr + .004);
+  return c.length ? pick(c) : null;
 }
 function landOn(o, base) {
   const bx = base.landed ? base.x : base.air.land.x, bz = base.landed ? base.z : base.air.land.z;
@@ -1332,15 +1348,16 @@ function collapse(o) {
 function spotFor(o, prefer) {
   const base = stackBase(o, prefer); if (base && (prefer || Math.random() < .3)) return landOn(o, base);
   let best = null;
-  for (const grow of [1, 1.18, 1.34]) {
+  for (const grow of [1, 1.18, 1.34, 1.5, 1.66]) {
     best = freeSpot(o, grow);
     if (best.clear > .004) return best;
   }
-  const b2 = stackBase(o, false); if (b2) return landOn(o, b2);
+  const b2 = stackBase(o, false) || carrierBase(o); if (b2) return landOn(o, b2);
+  for (const grow of [1.85, 2.05, 2.3]) { best = freeSpot(o, grow); if (best.clear > .004) return best; }
   return best;
 }
 function freeSpot(o, grow) {
-  const A0 = tableArea(), A = { x: A0.x * grow, z: A0.z * Math.min(grow, 1.15) }, R = o.def.R + (o.def.extraR || 0) * .5;
+  const A0 = tableArea(), A = { x: A0.x * grow, z: A0.z * Math.min(grow, 1.3) }, R = o.def.R + (o.def.extraR || 0) * .5;
   let best = null, bs = -1e9;
   for (let k = 0; k < 90; k++) {
     const x = rand(-A.x + R, A.x - R), z = rand(-A.z + R, A.z - R);
@@ -1439,6 +1456,7 @@ function landObject(o) {
   const a = o.air, g = o.group;
   g.position.copy(a.land); g.quaternion.setFromAxisAngle(UP, a.yaw); o.yaw = a.yaw;
   o.air = null; o.landed = true; o.landedAt = performance.now(); o.x = a.land.x; o.z = a.land.z; o.drop.visible = false;
+  keepInViewSoon = true;
   o.baseY = a.land.y; o.below = a.land.on || null; o.depth = o.below ? (o.below.depth || 0) + 1 : 0; if (o.below) o.below.above = o;
   o.contact.visible = true; o.contactFade = 0; if (o.caustic) o.caustic.visible = true;
   o.wobV.set(rand(-1, 1) * .8, rand(-1, 1) * .8);
@@ -1557,7 +1575,8 @@ function stepReform(rdt) {
 }
 
 /* ------------------------------------------------------------------- loop */
-let last = performance.now(), glintT = 0;
+let last = performance.now(), glintT = 0, keepInViewSoon = false;
+const TEST = { speed: 1 };
 // keep the frame rate up: step the render resolution down when frames run long, back up when there is room
 const FT = { ema: 1 / 60, slow: 1 / 60, pr: prFor(), t: 0, top: prFor(), born: performance.now() };
 function adaptQuality(now) {
@@ -1584,7 +1603,8 @@ function frame(now) {
   for (let k = 0; k < sub; k++) for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; if (s.asleep) continue; if (stepShard(s, h)) settle(s); }
   for (const o of objs) if (o.staticDirty) { o.staticT = (o.staticT || 0) + rdt; const moving = shards.some(s => !s.asleep && s.obj === o); if (o.staticT > .35 || !moving) rebuildStatic(o); }
   stepReform(rdt);
-  stepObjects(rdt * lerp(1, ts, .5), rdt);
+  stepObjects(rdt * lerp(1, ts, .5) * TEST.speed, rdt);
+  if (keepInViewSoon) { keepInViewSoon = false; keepInView(); }
   crumbs.step(dt); stepParticles(dt, rdt); stepRings(dt);
   glintT -= rdt;
   if (glintT < 0 && statics.length) { glintT = rand(.08, .25);
@@ -1670,7 +1690,9 @@ window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, 
   shardScreen: () => { const s = pick(shards); if (!s) return null; const v = s.mesh.position.clone().project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
   reform: () => startReform(), reforming: () => !!reform,
   air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase]; },
-  combo: () => TOSS.combo, queue: k => { TOSS.bag.push(...k); } };
+  combo: () => TOSS.combo, speed: k => { TEST.speed = k; },
+  overlaps: () => { const L = objs.filter(o => o.landed && alive(o)); const chain = (a, b) => { for (let q = a; q; q = q.below) if (q === b) return true; for (let q = b; q; q = q.below) if (q === a) return true; return false; };
+    const bad = []; for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const a = L[i], b = L[j]; if (chain(a, b)) continue; const d = Math.hypot(a.x - b.x, a.z - b.z); if (d < (a.def.R + b.def.R) * .92) bad.push([a.kind, b.kind, +d.toFixed(3)]); } return { landed: L.length, stacked: L.filter(o => o.below).length, bad }; }, queue: k => { TOSS.bag.push(...k); } };
 clearTable();
 requestAnimationFrame(frame);
 requestAnimationFrame(() => document.getElementById('veil').classList.add('gone'));
