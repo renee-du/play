@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>Still Life, Broken</title>
+<title>Still Life, Tossed</title>
 <meta name="description" content="A still life of porcelain, stoneware and coloured glass to break with a hammer, piece by piece.">
 <style>
 :root{--paper:#ffffff;--icon:#b3ada6;--icon-hi:#3a3633;--wash:rgba(255,255,255,.72);--focus:#22409b;color-scheme:light}
@@ -48,7 +48,10 @@ function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.h
 /* -------------------------------------------------------------- renderer */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 const DPR = Math.min(window.devicePixelRatio || 1, 1.75);
-renderer.setPixelRatio(DPR);
+// full screen on a large display is a lot of pixels: cap the frame at about 2.4 million, which still looks sharp
+const PR_FLOOR = DPR >= 2 ? 1.25 : 1;
+const prFor = () => clamp(Math.min(DPR, Math.sqrt(3.6e6 / (innerWidth * innerHeight))), Math.min(PR_FLOOR, DPR), DPR);
+renderer.setPixelRatio(prFor());
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.0;
@@ -83,13 +86,12 @@ const camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, 0.05, 3
 const key = new THREE.DirectionalLight(0xfff4e8, 2.5);
 key.position.set(-1.1, 2.4, 1.2);
 key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
+key.shadow.mapSize.set(1024, 1024);
 key.shadow.camera.left = -1.3; key.shadow.camera.right = 1.3; key.shadow.camera.top = 1.3; key.shadow.camera.bottom = -1.3;
 key.shadow.camera.near = 0.5; key.shadow.camera.far = 6;
-key.shadow.radius = 7; key.shadow.blurSamples = 16; key.shadow.bias = -0.0004;
+key.shadow.radius = 3.5; key.shadow.blurSamples = 8; key.shadow.bias = -0.0004;
 scene.add(key, key.target);
 const rim = new THREE.DirectionalLight(0xeef3ff, 0.55); rim.position.set(1.6, 1.2, -1.5); scene.add(rim);
-const flash = new THREE.PointLight(0xfff4e6, 0, 0.9, 2); scene.add(flash);
 
 const table = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.24, color: 0x2a2018 }));
 table.rotation.x = -Math.PI / 2; table.receiveShadow = true; scene.add(table);
@@ -210,6 +212,8 @@ function weather(c, amount = 1) {
   g.filter = 'none';
   for (let i = 0; i < w * h / 90; i++) { g.fillStyle = Math.random() < .5 ? `rgba(255,255,255,${rand(.04, .12) * amount})` : `rgba(20,30,60,${rand(.02, .06) * amount})`; g.fillRect(rand(w), rand(h), rand(1, 3), rand(1, 3)); }
 }
+const TEXC = {};
+const memoTex = (k, f) => TEXC[k] || (TEXC[k] = canvasTex(f()));
 function canvasTex(c, srgb = true, rep) {
   const t = new THREE.CanvasTexture(c);
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
@@ -629,7 +633,7 @@ function makeKinds() {
   const plate = (R, paint, o) => () => {
     const s = R / .135, t = .0048;
     const pts = [[0.0006, .0029, t], [.068 * s, .0029, t], [.084 * s, .0038, t], [.096 * s, .0072, t], [.112 * s, .0125, t], [.127 * s, .0165, t], [.1345 * s, .0182, t * .9]];
-    const tex = canvasTex(plateCanvas(paint));
+    const tex = memoTex('plate' + R, () => plateCanvas(paint));
     const mats = [porcelain({ map: tex }), porcelain(o.under ? { color: o.under } : {}), biscuit(PORC_EDGE), porcelain(o.rimCol ? { color: o.rimCol } : {})];
     const part = lathe(pts, { mats: { inner: 0, outer: 1, edge: 2, rim: 3 }, uvI: planUV(R), uvO: planUV(R), th0: -Math.PI / 2 });
     return { parts: [part], mats, flat: true, R, H: .02, pal: o.pal, edgeCol: PORC_EDGE, pitch: o.pitch };
@@ -641,7 +645,7 @@ function makeKinds() {
   K.vase = () => {
     const sc = .26 / 222, t = .0042, H = .26;
     const pts = vessel(VASE_PTS, t, sc, { bottomT: .006 });
-    const tex = canvasTex(vaseCanvas());
+    const tex = memoTex('vase', vaseCanvas);
     const mats = [porcelain({ map: tex }), porcelain({ color: 0xdfe2e3, roughness: .35 }), biscuit(PORC_EDGE), porcelain({ color: 0x2a47a0 })];
     return { parts: [lathe(pts, { mats: { outer: 0, inner: 1, edge: 2, rim: 3 }, uvO: (u, v, m) => [u, m.p[1] / H], uvI: cylUV(H), th0: Math.PI / 2 })], mats, R: .085, H, pal: bluePal, edgeCol: PORC_EDGE, pitch: .7 };
   };
@@ -649,7 +653,7 @@ function makeKinds() {
     const sc = .001, t = .0052, H = .118;
     const wall = [[0, 44], [3, 46.5], [9, 46], [20, 43], [45, 39.5], [78, 40.5], [104, 45], [118, 47.5]];
     const pts = vessel(wall, t, sc, { bottomT: .007 });
-    const tex = canvasTex(glazeStrip([[0, '#c58449'], [.035, '#d29559'], [.06, '#6f300d'], [.12, '#8b3f14'], [.45, '#a3511d'], [.85, '#ad5c25'], [.95, '#c98244'], [1, '#e2ac6c']], 64, 512, '#5a2208'));
+    const tex = memoTex('mug', () => glazeStrip([[0, '#c58449'], [.035, '#d29559'], [.06, '#6f300d'], [.12, '#8b3f14'], [.45, '#a3511d'], [.85, '#ad5c25'], [.95, '#c98244'], [1, '#e2ac6c']], 64, 512, '#5a2208'));
     const mats = [porcelain({ map: tex, roughness: .16, color: 0xffffff }), porcelain({ color: 0x7b3713, roughness: .2 }), biscuit('#d9c3a2'), porcelain({ color: 0xd99a5a })];
     const handle = tube([[.0405, .095, 0], [.083, .106, 0], [.093, .05, 0], [.0425, .033, 0]], .0125, { mats: { outer: 0, inner: 0, edge: 2, rim: 0 }, uvO: (u, v, m) => [v, m.p[1] / H], uvI: (u, v, m) => [v, m.p[1] / H] });
     return { parts: [lathe(pts, { mats: { outer: 0, inner: 1, edge: 2, rim: 3 }, uvO: cylUV(H), uvI: cylUV(H), th0: 0 }), handle], mats, R: .047, H, pal: ['#b5612a', '#d9955a', '#7a3a14', '#e8b27d'], edgeCol: '#d9c3a2', pitch: .8, extraR: .05 };
@@ -658,7 +662,7 @@ function makeKinds() {
     const sc = .00105, t = .0046, H = .065;
     const wall = [[0, 25], [5, 26.5], [9, 30], [24, 44], [42, 54], [56, 58.5], [62, 60]];
     const pts = vessel(wall, t, sc);
-    const tex = canvasTex(glazeStrip([[0, '#efe3d9'], [.07, '#efe3d9'], [.085, '#eab9cc'], [1, '#f2c6d6']], 16, 256));
+    const tex = memoTex('flute', () => glazeStrip([[0, '#efe3d9'], [.07, '#efe3d9'], [.085, '#eab9cc'], [1, '#f2c6d6']], 16, 256));
     const mats = [porcelain({ map: tex, roughness: .22 }), porcelain({ color: 0xf3cbd9, roughness: .22 }), biscuit('#f1e4da'), porcelain({ color: 0xf7d6e2 })];
     const fx = (th, y) => { const m = clamp((y - .01) / .01, 0, 1) * clamp((.058 - y) / .008, 0, 1); return -.0021 * m * (.5 + .5 * Math.cos(th * 18)) ** 1.6; };
     return { parts: [lathe(pts, { mats: { outer: 0, inner: 1, edge: 2, rim: 3 }, uvO: cylUV(H), uvI: cylUV(H), fx, nu: 216 })], mats, R: .064, H, pal: ['#e9a9c3', '#f6d2df', '#c97a9c', '#fbe6ee'], edgeCol: '#f1e4da', pitch: 1.05 };
@@ -667,8 +671,8 @@ function makeKinds() {
     const sc = .00112, t = .0062, H = .042;
     const wall = [[0, 60], [3, 63], [7, 70], [18, 82], [30, 88], [36, 89.5]];
     const pts = vessel(wall, t, sc);
-    const outTex = canvasTex(mottle('#5b8a51', [['#2f5a2f', .1, .35], ['#a9c98f', .1, .3], ['#203d22', .2, .45]], 1024, 256, 900, ['#cbc0a8', .09]));
-    const inTex = canvasTex(radialGlaze('#5a8850', ['rgba(40,80,40,.25)', 'rgba(190,220,160,.18)'], [['#2f5a2f', .1, .3], ['#b5d29b', .1, .3], ['#1d3a20', .15, .4]]));
+    const outTex = memoTex('greenO', () => mottle('#5b8a51', [['#2f5a2f', .1, .35], ['#a9c98f', .1, .3], ['#203d22', .2, .45]], 1024, 256, 900, ['#cbc0a8', .09]));
+    const inTex = memoTex('greenI', () => radialGlaze('#5a8850', ['rgba(40,80,40,.25)', 'rgba(190,220,160,.18)'], [['#2f5a2f', .1, .3], ['#b5d29b', .1, .3], ['#1d3a20', .15, .4]]));
     const mats = [porcelain({ map: outTex, roughness: .14 }), porcelain({ map: inTex, roughness: .12 }), biscuit('#cdbf9f'), porcelain({ color: 0xd9dcc3 })];
     const ph = rand(TAU), fx = (th, y, r) => r * (.012 * Math.sin(2 * th + ph) + .006 * Math.sin(5 * th + ph * 2)) * clamp(y / .02, 0, 1);
     return { parts: [lathe(pts, { mats: { outer: 0, inner: 1, edge: 2, rim: 3 }, uvO: cylUV(H), uvI: planUV(.1), fx })], mats, R: .1, H, pal: ['#5b8a52', '#8cb27a', '#3f6a3b', '#c9d7a8'], edgeCol: '#cdbf9f', pitch: .9 };
@@ -677,8 +681,8 @@ function makeKinds() {
     const sc = .00108, t = .0066, H = .065;
     const wall = [[0, 40], [2.5, 43], [6, 50], [18, 62], [34, 69.5], [50, 71.5], [60, 72]];
     const pts = vessel(wall, t, sc);
-    const outTex = canvasTex(mottle('#aabfe0', [['#56607a', .25, .6]], 1024, 256, 500, ['#9c8f80', .05]));
-    const inTex = canvasTex(mottle('#f1e1a3', [['#7a6a40', .2, .5]], 1024, 1024, 700));
+    const outTex = memoTex('blueO', () => mottle('#aabfe0', [['#56607a', .25, .6]], 1024, 256, 500, ['#9c8f80', .05]));
+    const inTex = memoTex('blueI', () => mottle('#f1e1a3', [['#7a6a40', .2, .5]], 1024, 1024, 700));
     const mats = [new THREE.MeshPhysicalMaterial({ map: outTex, roughness: .62, sheen: .3, sheenColor: 0xffffff, sheenRoughness: .6 }), new THREE.MeshPhysicalMaterial({ map: inTex, roughness: .55 }), biscuit('#b8aa96'), new THREE.MeshPhysicalMaterial({ color: 0xcbd8ee, roughness: .55 })];
     return { parts: [lathe(pts, { mats: { outer: 0, inner: 1, edge: 2, rim: 3 }, uvO: cylUV(H), uvI: planUV(.078) })], mats, R: .078, H, pal: ['#a9bedf', '#f2e2a6', '#7f98c4', '#fff3c4'], edgeCol: '#b8aa96', pitch: .95 };
   };
@@ -723,20 +727,6 @@ function makeKinds() {
   return K;
 }
 const KINDS = makeKinds();
-const LAYOUTS = {
-  wide: [
-    ['bottle', -.44, -.2], ['vase', -.31, -.19], ['wineSlate', -.17, -.21], ['wineRose', -.08, -.195], ['wineAmber', .01, -.21], ['tumblerPink', .12, -.2], ['tumblerTeal', .21, -.215], ['vaseGlass', .31, -.19],
-    ['mug', -.3, -.02], ['bowlFluted', -.08, -.025], ['bowlBlue', .12, -.015], ['plateCobalt', .3, .005],
-    ['plateBlue', -.33, .2], ['bowlGreen', -.085, .2], ['plateChintz', .135, .205],
-  ],
-  tall: [
-    ['bottle', -.22, -.42], ['vase', -.1, -.41], ['wineSlate', .03, -.425], ['wineRose', .12, -.41], ['wineAmber', .21, -.425],
-    ['tumblerPink', -.2, -.22], ['mug', -.085, -.215], ['bowlFluted', .085, -.22], ['tumblerTeal', .2, -.225],
-    ['plateBlue', -.1, 0], ['bowlBlue', .12, -.005], ['vaseGlass', .245, .01],
-    ['bowlGreen', -.14, .245], ['plateCobalt', .1, .245],
-    ['plateChintz', -.02, .46],
-  ],
-};
 
 /* --------------------------------------------------------- height field */
 const HF = { x0: -1.6, z0: -1.4, cs: .003, nx: 1067, nz: 934 };
@@ -763,7 +753,7 @@ function hfRebuild(box) {
   const i0 = Math.max(0, Math.floor((box.min.x - x0) / cs) - 1), i1 = Math.min(nx - 1, Math.floor((box.max.x - x0) / cs) + 1);
   const j0 = Math.max(0, Math.floor((box.min.z - z0) / cs) - 1), j1 = Math.min(HF.nz - 1, Math.floor((box.max.z - z0) / cs) + 1);
   for (let j = j0; j <= j1; j++) h.fill(0, j * nx + i0, j * nx + i1 + 1);
-  for (const o of objs) if (!o.broken && o.def.flat && o.wbox.intersectsBox(box)) hfRaster(o.wtris);
+  for (const o of objs) if (!o.broken && o.landed && !o.dissolve && o.def.flat && o.wbox && o.wbox.intersectsBox(box)) hfRaster(o.wtris);
   for (const s of statics) if (s.wbox.intersectsBox(box)) hfRaster(s.wtris);
 }
 function worldTris(geo, mat) {
@@ -796,36 +786,37 @@ function footRadius(def) {
   if (def.flat) return def.R;
   const pts = def.parts[def.glass ? 0 : 0].pr.pts; let r = 0; for (const p of pts) if (p[1] < .012) r = Math.max(r, p[0] + p[2] / 2); return r || def.R * .6;
 }
-function buildObjects() {
-  for (const o of objs) { root.remove(o.group); if (o.staticMesh) root.remove(o.staticMesh); }
+function makeObject(kind) {
+  const def = KINDS[kind]();
+  const group = new THREE.Group();
+  const o = { family: def.flat ? 'plate' : kind.startsWith('bowl') ? 'bowl' : null, baseY: 0, kind, def, group, broken: false, glass: !!def.glass, parts: def.parts, x: 0, z: 0, wob: new THREE.Vector2(), wobV: new THREE.Vector2(), appear: 1, H: def.H, landed: false };
+  const meshes = [];
+  def.parts.forEach((part, pi) => {
+    part.full = gridTris(part);
+    const b = buildGeo(o, pi, part.full, false);
+    const m = new THREE.Mesh(b.geo, def.mats); m.castShadow = !def.glass; m.receiveShadow = !def.glass; m.userData.obj = o; group.add(m); meshes.push(m);
+  });
+  o.meshes = meshes;
+  o.contactA = def.glass ? .22 : def.flat ? .55 : .75;
+  const cs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, depthWrite: false, toneMapped: false, opacity: 0 }));
+  const fr = footRadius(def) * (def.flat ? 2.1 : 2.6);
+  cs.scale.set(fr, fr, 1); cs.rotation.x = -Math.PI / 2; cs.position.y = .0004; cs.renderOrder = -1; cs.visible = false; group.add(cs); o.contact = cs;
+  if (def.glass) {
+    const L = new THREE.Vector3(1.1, 0, -1.2).normalize(), len = def.R * 2 + def.H * .72, wid = def.R * 2.3;
+    const holder = new THREE.Group(); holder.rotation.y = Math.atan2(-L.z, L.x); holder.position.y = .0005;
+    const cm = new THREE.Mesh(new THREE.PlaneGeometry(len, wid), new THREE.MeshBasicMaterial({ map: causticTex(def.tint), transparent: true, depthWrite: false, toneMapped: false, opacity: 0 }));
+    cm.rotation.x = -Math.PI / 2; cm.position.x = len / 2 - def.R * .9; cm.renderOrder = -1; holder.add(cm); holder.visible = false; group.add(holder); o.caustic = holder; o.causticM = cm;
+  }
+  // a soft shadow straight below while it is in the air, so you can read its height
+  o.drop = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, depthWrite: false, toneMapped: false, opacity: 0 }));
+  o.drop.rotation.x = -Math.PI / 2; o.drop.renderOrder = -1; o.drop.visible = false; root.add(o.drop);
+  return o;
+}
+function clearTable() {
+  for (const o of objs) { root.remove(o.group); root.remove(o.drop); if (o.staticMesh) root.remove(o.staticMesh); }
   for (const s of shards) root.remove(s.mesh);
   objs = []; shards = []; statics = []; HF.h.fill(0); crumbs.reset();
-  const tall = innerWidth / innerHeight < .9; layoutKey = tall ? 'tall' : 'wide';
-  LAYOUTS[layoutKey].forEach(([kind, x, z], idx) => {
-    const def = KINDS[kind]();
-    const group = new THREE.Group(); group.position.set(x, 0, z);
-    const o = { kind, def, group, broken: false, glass: !!def.glass, parts: def.parts, x, z, wob: new THREE.Vector2(), wobV: new THREE.Vector2(), appear: -idx * .05 };
-    const meshes = [];
-    def.parts.forEach((part, pi) => {
-      part.full = gridTris(part);
-      const b = buildGeo(o, pi, part.full, false);
-      const m = new THREE.Mesh(b.geo, def.mats); m.castShadow = !def.glass; m.receiveShadow = !def.glass; m.userData.obj = o; group.add(m); meshes.push(m);
-    });
-    o.meshes = meshes;
-    const cs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, depthWrite: false, toneMapped: false, opacity: def.glass ? .22 : def.flat ? .55 : .75 }));
-    const fr = footRadius(def) * (def.flat ? 2.1 : 2.6);
-    cs.scale.set(fr, fr, 1); cs.rotation.x = -Math.PI / 2; cs.position.y = .0004; cs.renderOrder = -1; group.add(cs); o.contact = cs;
-    root.add(group); group.updateMatrixWorld(true);
-    if (def.glass) {
-      const L = new THREE.Vector3(1.1, 0, -1.2).normalize(), len = def.R * 2 + def.H * .72, wid = def.R * 2.3;
-      const holder = new THREE.Group(); holder.rotation.y = Math.atan2(-L.z, L.x); holder.position.y = .0005;
-      const cm = new THREE.Mesh(new THREE.PlaneGeometry(len, wid), new THREE.MeshBasicMaterial({ map: causticTex(def.tint), transparent: true, depthWrite: false, toneMapped: false }));
-      cm.rotation.x = -Math.PI / 2; cm.position.x = len / 2 - def.R * .9; cm.renderOrder = -1; holder.add(cm); group.add(holder);
-    }
-    if (def.flat) { o.wtris = worldTris(meshes[0].geometry, meshes[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
-    o.H = def.H;
-    objs.push(o);
-  });
+  TOSS.bag = []; TOSS.timer = 1.1; TOSS.combo = 0;
   fitCamera();
 }
 function radiusAt(o, y) {
@@ -836,6 +827,8 @@ function radiusAt(o, y) {
 
 /* ------------------------------------------------------------- camera */
 const camTarget = new THREE.Vector3();
+const TABLE = { wide: { x: .42, z: .24 }, tall: { x: .24, z: .4 } };
+const tableArea = () => TABLE[innerWidth / innerHeight < .9 ? 'tall' : 'wide'];
 const VIEW = { az: 0, el: .63, dist: 2, fit: 2, tAz: 0, tEl: .63, tDist: 2, baseEl: .63 };
 function placeCamera(az, el, dist) {
   camera.position.set(camTarget.x + Math.sin(az) * Math.cos(el) * dist, camTarget.y + Math.sin(el) * dist, camTarget.z + Math.cos(az) * Math.cos(el) * dist);
@@ -845,8 +838,7 @@ function fitCamera(resetView = true) {
   const tall = innerWidth / innerHeight < .9;
   camera.fov = tall ? 34 : 26; camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   const el = (tall ? 50 : 36) * Math.PI / 180;
-  const box = new THREE.Box3();
-  for (const o of objs) { box.expandByPoint(new THREE.Vector3(o.x - o.def.R, 0, o.z - o.def.R)); box.expandByPoint(new THREE.Vector3(o.x + o.def.R + (o.def.extraR || 0), o.def.H, o.z + o.def.R)); }
+  const A = tableArea(), box = new THREE.Box3(new THREE.Vector3(-A.x, 0, -A.z), new THREE.Vector3(A.x, .42, A.z));
   box.getCenter(camTarget); camTarget.y = 0.03;
   const corners = []; for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
   let lo = .3, hi = 12;
@@ -920,7 +912,7 @@ const pPos = new Float32Array(POINTS_MAX * 3), pCol = new Float32Array(POINTS_MA
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute('aColor', new THREE.BufferAttribute(pCol, 4));
 pGeo.setAttribute('aSize', new THREE.BufferAttribute(pSize, 1)); pGeo.setAttribute('aKind', new THREE.BufferAttribute(pKind, 1));
 const pMat = new THREE.ShaderMaterial({
-  uniforms: { uScale: { value: innerHeight * DPR * .5 } },
+  uniforms: { uScale: { value: innerHeight * prFor() * .5 } },
   vertexShader: `attribute vec4 aColor; attribute float aSize; attribute float aKind; varying vec4 vC; varying float vK; uniform float uScale;
     void main(){ vC=aColor; vK=aKind; vec4 mv=modelViewMatrix*vec4(position,1.); gl_PointSize=aSize*uScale/-mv.z; gl_Position=projectionMatrix*mv; }`,
   fragmentShader: `varying vec4 vC; varying float vK;
@@ -1068,11 +1060,11 @@ function stepShard(s, dt) {
     if (pen > 0) { touching = true; lift = Math.max(lift, pen); hitV = Math.max(hitV, contact(s, p, UP, .28, .55)); }
   }
   for (const o of objs) {
-    if (o.broken || o.def.flat || o.appear < 1) continue;
-    const dx = m.position.x - o.x, dz = m.position.z - o.z; if (dx * dx + dz * dz > (o.def.R + .07) ** 2 || m.position.y > o.H + .03) continue;
+    if (o.broken || o.def.flat || !o.landed || o.dissolve) continue;
+    const by = o.baseY || 0, dx = m.position.x - o.x, dz = m.position.z - o.z; if (dx * dx + dz * dz > (o.def.R + .07) ** 2 || m.position.y > by + o.H + .03) continue;
     for (const p of P) {
-      const px = p.x - o.x, pz = p.z - o.z, d = Math.hypot(px, pz), R = radiusAt(o, p.y);
-      if (p.y < o.H && d < R && d > 1e-5) { const nn = new THREE.Vector3(px / d, 0, pz / d); m.position.addScaledVector(nn, (R - d) * .8); const hv = contact(s, p, nn, .35, .3);
+      const px = p.x - o.x, pz = p.z - o.z, d = Math.hypot(px, pz), R = radiusAt(o, p.y - by);
+      if (p.y - by < o.H && p.y > by && d < R && d > 1e-5) { const nn = new THREE.Vector3(px / d, 0, pz / d); m.position.addScaledVector(nn, (R - d) * .8); const hv = contact(s, p, nn, .35, .3);
         if (hv > .5) { play(o.glass ? 'glass_land' : 'ceramic_land', { gain: clamp(hv / 5, .05, .4), rate: rand(.95, 1.05) * o.def.pitch, pan: panX(o.x), verb: .3 }); o.wobV.x += rand(-1, 1) * hv * .05; o.wobV.y += rand(-1, 1) * hv * .05; } }
     }
   }
@@ -1139,7 +1131,7 @@ let freezeT = 0, slowT = 0, slowDur = 1, slowMin = 1, shake = 0;
 function juice(freeze, smin, sdur, sh) { freezeT = Math.max(freezeT, freeze); if (smin < 1) { slowMin = Math.min(slowT > 0 ? slowMin : 1, smin); slowT = slowDur = sdur; } shake = Math.max(shake, sh); }
 function puff(x, y, z, n = 1) { for (let i = 0; i < 3 * n; i++) addP({ k: 1, x: x + rand(-.01, .01), y: y + rand(0, .01), z: z + rand(-.01, .01), vx: rand(-.08, .08), vy: rand(.02, .12), vz: rand(-.08, .08), s: rand(.012, .026), a: rand(.12, .22), life: 0, max: rand(.9, 1.6), c: colorV(pick(['#cfc6b8', '#ddd6ca', '#c4baaa'])) }); }
 function burst(p, def, power, glassy) {
-  flash.position.set(p.x, p.y + .03, p.z); flash.intensity = 2.2 * power;
+  
   const nm = Math.round((glassy ? 160 : 110) * power);
   for (let i = 0; i < nm; i++) { const a = rand(TAU), el = rand(-.3, 1.2), sp = rand(.25, 1.6) * power;
     addP({ k: 0, x: p.x, y: p.y, z: p.z, vx: Math.cos(a) * Math.cos(el) * sp, vy: Math.sin(el) * sp * .7, vz: Math.sin(a) * Math.cos(el) * sp, sw: rand(-3, 3), s: rand(.0025, .007), life: 0, max: rand(1.1, 2.6), c: colorV(pick(def.pal)), ph: rand(TAU) }); }
@@ -1167,7 +1159,11 @@ function centroidOf(part, tris) { let x = 0, y = 0, z = 0, n = 0; for (let i = 0
 // the first blow breaks an object into a handful of large pieces; every blow after makes them smaller
 const FIRST_BLOW = { glass: [14, .05, .5], flat: [8, .07, .6], ceramic: [11, .06, .58] };
 function smash(o, hitWorld) {
-  o.broken = true; root.remove(o.group);
+  FT.hit = performance.now();
+  o.group.updateMatrixWorld(true);
+  const wasAir = !!o.air, objVel = wasAir ? o.air.vel.clone() : new THREE.Vector3();
+  o.breakPos = o.group.position.clone(); o.breakQuat = o.group.quaternion.clone();
+  collapse(o); o.broken = true; o.air = null; o.landed = false; root.remove(o.group); o.drop.visible = false;
   const inv = new THREE.Matrix4().copy(o.group.matrixWorld).invert();
   const Il = hitWorld.clone().applyMatrix4(inv), I = [Il.x, Il.y, Il.z];
   const cands = [];
@@ -1186,7 +1182,7 @@ function smash(o, hitWorld) {
       const sp = (glassy ? rand(.4, 1.3) : rand(.3, 1)) * (.35 + near) * small;
       const vel = new THREE.Vector3(dir.x * sp, (o.def.flat ? rand(.7, 1.6) : rand(.1, .7)) * (.45 + near) + Math.max(0, dir.y) * sp * .5, dir.z * sp);
       const wv = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(rand(3, 14) * (o.def.flat ? .55 : 1));
-      makeShard(o, pi, tris, P0, quat, vel, wv);
+      makeShard(o, pi, tris, P0, quat, vel.addScaledVector(objVel, .8), wv);
     }
   });
   burst(hitWorld, o.def, o.def.flat ? 1 : 1.1, glassy);
@@ -1194,12 +1190,14 @@ function smash(o, hitWorld) {
   const pan = panX(hitWorld.x);
   if (glassy) { play('glass_smash', { gain: 1.15, rate: rand(.9, 1.0) * Math.min(1, o.def.pitch), pan, verb: .7 }); }
   else { play('ceramic_smash', { gain: 1.1, rate: rand(.88, .98) * Math.min(1, o.def.pitch), pan, verb: .55 }); play('crunch', { gain: .18, rate: rand(.9, 1), pan, verb: .25 }); }
-  for (const n of objs) { if (n === o || n.broken) continue; const d = Math.hypot(n.x - o.x, n.z - o.z); if (d < .38) { n.wobV.x += (n.x - o.x) / d * (1 - d / .38) * 1.4; n.wobV.y += (n.z - o.z) / d * (1 - d / .38) * 1.4;
+  for (const n of objs) { if (n === o || n.broken || !n.landed || n.dissolve) continue; const d = Math.hypot(n.x - o.x, n.z - o.z); if (d < .38) { n.wobV.x += (n.x - o.x) / d * (1 - d / .38) * 1.4; n.wobV.y += (n.z - o.z) / d * (1 - d / .38) * 1.4;
     if (d < .26) play(n.glass ? 'glass_land' : 'ceramic_land', { gain: .2 * (1 - d / .26), rate: n.def.pitch * rand(.97, 1.03), pan: panX(n.x), delay: rand(.03, .09), verb: .3 }); } }
   if (navigator.vibrate) try { navigator.vibrate(glassy ? [12, 24, 8] : 26); } catch (e) { }
-  if (o.def.flat) hfRebuild(o.wbox);
+  if (o.def.flat && o.wbox) { const b = o.wbox; o.wbox = null; hfRebuild(b); }
+  if (wasAir) { TOSS.combo++; TOSS.timer = Math.min(TOSS.timer, rand(.45, .7)); }
 }
 function breakShard(s, hitWorld, power) {
+  FT.hit = performance.now();
   const o = s.obj, part = o.parts[s.pi];
   const qi = s.mesh.quaternion.clone().invert();
   const Il = hitWorld.clone().sub(s.mesh.position).applyQuaternion(qi).add(s.com), I = [Il.x, Il.y, Il.z];
@@ -1244,9 +1242,25 @@ function breakShard(s, hitWorld, power) {
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 function pickAt(cx, cy) {
   ndc.set(cx / innerWidth * 2 - 1, -(cy / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
-  const targets = []; for (const o of objs) if (!o.broken && o.appear > .7) targets.push(...o.meshes);
+  const targets = []; for (const o of objs) if (!o.broken && !o.dissolve) targets.push(...o.meshes);
   for (const s of shards) targets.push(s.mesh);
   const hits = ray.intersectObjects(targets, false);
+  if (!(hits.length && hits[0].object.userData.obj)) {
+    // something in flight is hard to hit dead-on: a near miss counts
+    let best = null, bd = 1e9;
+    for (const o of objs) {
+      if (!o.air || o.broken) continue;
+      o.group.updateMatrixWorld(true);
+      const c = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.def.H * .5, 0));
+      const r = Math.max(o.def.R, o.def.H * .5) + .02, d = ray.ray.distanceToPoint(c);
+      if (d < r && d < bd) { bd = d; best = { o, c }; }
+    }
+    if (best) {
+      const cp = new THREE.Vector3(); ray.ray.closestPointToPoint(best.c, cp);
+      const off = cp.clone().sub(best.c), l = off.length(), n = l > 1e-6 ? off.multiplyScalar(1 / l) : ray.ray.direction.clone().negate();
+      return { point: best.c.clone().addScaledVector(n, Math.min(l, best.o.def.R * .7)), normal: n, obj: best.o };
+    }
+  }
   if (hits.length) { const h = hits[0]; const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : UP.clone(); if (n.dot(ray.ray.direction) > 0) n.negate();
     return { point: h.point.clone(), normal: n, obj: h.object.userData.obj, shard: h.object.userData.shard }; }
   const t = -ray.ray.origin.y / ray.ray.direction.y; if (t > 0) { const p = ray.ray.origin.clone().addScaledVector(ray.ray.direction, t); p.y = hfAt(p.x, p.z); return { point: p, normal: UP.clone() }; }
@@ -1254,7 +1268,7 @@ function pickAt(cx, cy) {
 }
 function strike(hit) {
   if (!hit) return;
-  if (hit.obj && !hit.obj.broken) { smash(hit.obj, hit.point); return; }
+  if (hit.obj && !hit.obj.broken && !hit.obj.dissolve) { let w = hit.point; if (hit.local) { hit.obj.group.updateMatrixWorld(true); w = hit.obj.group.localToWorld(hit.local.clone()); } smash(hit.obj, w); return; }
   const p = hit.point;
   const near = shards.filter(s => s.mesh.position.distanceTo(p) < s.rad * .9 + .014).sort((a, b) => a.mesh.position.distanceTo(p) - b.mesh.position.distanceTo(p)).slice(0, 8);
   if (hit.shard && shards.includes(hit.shard) && !near.includes(hit.shard)) near.unshift(hit.shard);
@@ -1263,7 +1277,7 @@ function strike(hit) {
     for (const s of near) { mats.add(s.obj.glass); breakShard(s, p, 1); }
     for (const s of statics.slice()) { const d = s.mesh.position.distanceTo(p); if (d < .07 && Math.random() < .7) { wake(s); s.v.set((s.mesh.position.x - p.x) * 6, rand(.3, .9) * (1 - d / .07), (s.mesh.position.z - p.z) * 6); s.w.set(rand(-6, 6), rand(-6, 6), rand(-6, 6)); s.bounces = 1; } }
     const glassy = mats.has(true) && !mats.has(false);
-    flash.position.set(p.x, p.y + .03, p.z); flash.intensity = 1;
+    
     for (let i = 0; i < 40; i++) { const a = rand(TAU), sp = rand(.15, .7); addP({ k: 0, x: p.x, y: p.y + .004, z: p.z, vx: Math.cos(a) * sp, vy: rand(.05, .5), vz: Math.sin(a) * sp, sw: rand(-3, 3), s: rand(.002, .005), life: 0, max: rand(.7, 1.6), c: colorV(pick(def.pal)), ph: rand(TAU) }); }
     for (let i = 0; i < 10; i++) { const a = rand(TAU), sp = rand(.1, .6); crumbs.add(p.x, p.y + .003, p.z, Math.cos(a) * sp, rand(.4, 1.3), Math.sin(a) * sp, rand(.0007, .0016), pick(def.pal.concat([def.edgeCol]))); }
     if (glassy) for (let i = 0; i < 8; i++) addP({ k: 2, x: p.x + rand(-.03, .03), y: p.y + rand(0, .03), z: p.z + rand(-.03, .03), vx: 0, vy: 0, vz: 0, s: rand(.01, .022), life: -rand(0, .3), max: rand(.35, .7), c: [1, 1, 1] });
@@ -1276,6 +1290,204 @@ function strike(hit) {
   play('thud', { gain: .45, rate: rand(.9, 1.0), pan: panX(p.x), verb: .2 });
 }
 
+/* ---------------------------------------------------------------- the toss */
+// one at a time, each thing is thrown up from below, hangs, and drifts down like a leaf. hit it before it lands.
+const TOSS = { bag: [], timer: 1.1, combo: 0 };
+const smoother = t => t * t * t * (t * (t * 6 - 15) + 10);
+function nextKind() { if (!TOSS.bag.length) { TOSS.bag = Object.keys(KINDS); for (let i = TOSS.bag.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [TOSS.bag[i], TOSS.bag[j]] = [TOSS.bag[j], TOSS.bag[i]]; } } return TOSS.bag.pop(); }
+const landedCap = () => innerWidth / innerHeight < .9 ? 6 : 8;
+// like things settle on like things: plates on plates, a smaller bowl nests in a bigger one
+const alive = q => q && !q.broken && !q.dissolve;
+function stackY(o, base) {
+  const b = base.landed ? (base.baseY || 0) : base.air.land.y;
+  if (o.family === 'plate') return b + .0078;
+  return o.def.R < base.def.R * .9 ? b + base.H * .3 : b + base.H * .84;
+}
+function stackBase(o, prefer) {
+  if (!o.family) return null;
+  const c = objs.filter(q => q !== o && alive(q) && (q.landed || (q.air && q.air.gentle && !q.air.drop)) && q.family === o.family && !alive(q.above) && (q.depth || 0) < (o.family === 'plate' ? 9 : 4) && o.def.R <= q.def.R * 1.12 + .004);
+  if (!c.length) return null;
+  if (prefer) { const p = o.group.position; c.sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z)); return c[0]; }
+  return pick(c);
+}
+function landOn(o, base) {
+  const bx = base.landed ? base.x : base.air.land.x, bz = base.landed ? base.z : base.air.land.z;
+  const v = new THREE.Vector3(bx + rand(-.003, .003), stackY(o, base), bz + rand(-.003, .003)); v.on = base; v.clear = 1; base.above = o; return v;
+}
+// take something out of a stack and everything above it comes down a level, one after another
+function collapse(o) {
+  let below = alive(o.below) ? o.below : null, y = o.baseY || 0, a = o.above, k = 0;
+  if (o.below && o.below.above === o) o.below.above = null;
+  o.above = null; o.below = null;
+  while (alive(a)) {
+    const next = a.above;
+    a.landed = false; a.below = null; a.above = null;
+    if (a.def.flat && a.wbox) { const b = a.wbox; a.wbox = null; hfRebuild(b); }
+    const land = below ? landOn(a, below) : new THREE.Vector3(a.x, 0, a.z);
+    if (!below) land.clear = 1;
+    a.air = { phase: 'float', t: -k * .08, apex: a.group.position.clone(), land, qFrom: a.group.quaternion.clone(), yaw: a.yaw || 0, floatDur: .55, swayA: .004, swayF: 1, ph: 0, rockA: .05, prev: a.group.position.clone(), vel: new THREE.Vector3(), gentle: true, drop: true };
+    below = a; a = next; k++;
+  }
+}
+function spotFor(o, prefer) {
+  const base = stackBase(o, prefer); if (base && (prefer || Math.random() < .3)) return landOn(o, base);
+  let best = null;
+  for (const grow of [1, 1.18, 1.34]) {
+    best = freeSpot(o, grow);
+    if (best.clear > .004) return best;
+  }
+  const b2 = stackBase(o, false); if (b2) return landOn(o, b2);
+  return best;
+}
+function freeSpot(o, grow) {
+  const A0 = tableArea(), A = { x: A0.x * grow, z: A0.z * Math.min(grow, 1.15) }, R = o.def.R + (o.def.extraR || 0) * .5;
+  let best = null, bs = -1e9;
+  for (let k = 0; k < 90; k++) {
+    const x = rand(-A.x + R, A.x - R), z = rand(-A.z + R, A.z - R);
+    let clear = .2;
+    for (const q of objs) { if (q === o || q.broken || q.dissolve) continue; const t = q.air ? q.air.land : q.landed ? q.group.position : null; if (!t) continue; clear = Math.min(clear, Math.hypot(x - t.x, z - t.z) - (q.def.R + R)); }
+    let pile = 0; for (const [dx, dz] of [[0, 0], [R * .6, 0], [-R * .6, 0], [0, R * .6], [0, -R * .6]]) pile = Math.max(pile, hfAt(x + dx, z + dz));
+    const sc = Math.min(clear, .06) - pile * 6 - Math.hypot(x / A0.x, z / A0.z) * .012 + rand(0, .006);
+    if (sc > bs) { bs = sc; best = new THREE.Vector3(x, 0, z); best.clear = clear; }
+  }
+  return best;
+}
+function makeRoom() {
+  const standing = objs.filter(q => q.landed && !q.broken && !q.dissolve && !alive(q.below)).sort((a, b) => a.landedAt - b.landedAt);
+  while (standing.length >= landedCap()) dissolve(standing.shift());
+}
+function launch() {
+  const o = makeObject(nextKind());
+  const land = spotFor(o, false);
+  // start just below the bottom of the frame, in front of where it will land
+  const toward = new THREE.Vector3(camera.position.x - camTarget.x, 0, camera.position.z - camTarget.z).normalize();
+  // thrown from the side it is not landing on, so the arc reads across the frame: up, over and down
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0); right.y = 0; right.normalize();
+  const lx = land.clone().project(camera).x, side = lx > .15 ? -1 : lx < -.15 ? 1 : (Math.random() < .5 ? -1 : 1);
+  const start = land.clone().addScaledVector(right, side * .42).addScaledVector(toward, .06);
+  for (let i = 0; i < 80; i++) { const p = start.clone().setY(.03).project(camera); if (Math.abs(p.x) > 1.12 || p.y < -1.15) break; start.addScaledVector(right, side * .025); }
+  start.y = .02;
+  const apex = land.clone().lerp(start, .2); apex.x += rand(-.05, .05);
+  apex.y = .33 + (o.def.flat ? .03 : 0) - Math.min(.08, o.def.H * .2) + rand(-.012, .012);
+  const yaw = rand(TAU), axis = o.def.flat ? UP.clone() : new THREE.Vector3(rand(-1, 1), rand(-.3, .3), rand(-1, 1)).normalize();
+  o.air = { phase: 'rise', t: 0, start, apex, land, yaw, axis, turn: (o.def.flat ? rand(.4, .9) : rand(.32, .52)) * (Math.random() < .5 ? -1 : 1), flat: !!o.def.flat, riseDur: rand(.78, .84), floatDur: rand(1.75, 1.95) * (o.def.flat ? 1.08 : 1), toss: true, apexY: 0,
+    swayA: rand(.025, .045), swayF: rand(1.3, 1.9), ph: rand(TAU), rockA: o.def.flat ? rand(.08, .12) : rand(.07, .11), prev: start.clone(), vel: new THREE.Vector3() };
+  o.air.apexY = apex.y + land.y; o.yaw = yaw; root.add(o.group); objs.push(o); placeAir(o, 0);
+  whoosh();
+}
+function driftDown(o) {
+  // something made whole again floats down from where it broke, and settles with its own kind
+  const land = spotFor(o, true), under = land.on && land.on.air ? land.on.air : null;
+  o.air = { phase: 'float', t: 0, apex: o.group.position.clone(), land, qFrom: o.group.quaternion.clone(), yaw: o.yaw || 0, floatDur: Math.max(rand(1.4, 1.7), under ? under.floatDur - under.t + .35 : 0), swayA: rand(.015, .03), swayF: rand(1.2, 1.6), ph: rand(TAU), rockA: o.def.flat ? .14 : .07, prev: o.group.position.clone(), vel: new THREE.Vector3(), gentle: true };
+}
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _qy = new THREE.Quaternion(), _side = new THREE.Vector3();
+const _qt = new THREE.Quaternion(), _tAx = new THREE.Vector3();
+function faceTilt(ang) { // plates lean their painted face toward you
+  _tAx.set(camera.position.x - camTarget.x, 0, camera.position.z - camTarget.z).normalize(); _tAx.crossVectors(UP, _tAx).normalize();
+  return _qt.setFromAxisAngle(_tAx, ang);
+}
+// thrown with a spin that slows smoothly and finishes on a whole turn, so it arrives upright without a snap
+const _qs = new THREE.Quaternion();
+function tumble(a) {
+  const T = clamp((a.T || 0) / (a.riseDur + a.floatDur * .85), 0, 1);
+  // a lean that rises and settles back, not a flip; plates just turn slowly flat
+  return _qs.setFromAxisAngle(a.axis, a.flat ? a.turn * (1 - Math.pow(1 - T, 2.6)) : a.turn * Math.sin(Math.PI * T));
+}
+function placeAir(o, dt) {
+  const a = o.air, g = o.group, flat = o.def.flat;
+  _qy.setFromAxisAngle(UP, a.yaw);
+  if (a.toss) {
+    // one throw: the path across never stops; only the climb runs out at the top, then it settles down gently
+    const T = a.T || 0, Tt = a.riseDur + a.floatDur, u = clamp(T / Tt, 0, 1), h = 1 - Math.pow(1 - u, 1.6);
+    let y, s = 0, r = 1;
+    if (T < a.riseDur) { r = T / a.riseDur; y = a.start.y + (a.apexY - a.start.y) * (1 - (1 - r) * (1 - r)); }
+    else {
+      s = clamp((T - a.riseDur) / a.floatDur, 0, 1); y = lerp(a.apexY, a.land.y, s * s * (3 - 2 * s));
+      if (a.phase === 'rise') { a.phase = 'float'; for (let i = 0; i < 5; i++) addP({ k: 2, x: g.position.x + rand(-.04, .04), y: g.position.y + rand(-.02, .06), z: g.position.z + rand(-.04, .04), vx: 0, vy: 0, vz: 0, s: rand(.008, .016), life: -rand(0, .3), max: rand(.4, .8), c: [1, 1, 1] }); }
+    }
+    _side.set(a.land.x - a.start.x, 0, a.land.z - a.start.z); if (_side.lengthSq() < 1e-6) _side.set(1, 0, 0); _side.normalize().set(-_side.z, 0, _side.x);
+    const env = Math.sin(Math.PI * s), sw = Math.sin(s * Math.PI * a.swayF * 2 + a.ph) * a.swayA * .5 * env;
+    g.position.set(lerp(a.start.x, a.land.x, h) + _side.x * sw, y, lerp(a.start.z, a.land.z, h) + _side.z * sw);
+    _qb.copy(_qy); if (flat) _qb.premultiply(faceTilt(.62 * (T < a.riseDur ? r : 1 - smoother(clamp((s - .5) / .5, 0, 1)))));
+    _qa.copy(_qb).multiply(tumble(a));
+    _qb.setFromAxisAngle(_side, Math.sin(s * Math.PI * a.swayF * 2 + a.ph + 1.3) * a.rockA * env);
+    g.quaternion.copy(_qb).multiply(_qa);
+    if (T >= Tt) { landObject(o); return; }
+  } else if (a.phase === 'rise') {
+    const u = clamp(a.t / a.riseDur, 0, 1), e = 1 - Math.pow(1 - u, 2.2), m = 1 - e;
+    const cx = (a.start.x + a.apex.x) / 2, cz = (a.start.z + a.apex.z) / 2, cy = a.apex.y * 1.25;
+    g.position.set(m * m * a.start.x + 2 * m * e * cx + e * e * a.apex.x, m * m * a.start.y + 2 * m * e * cy + e * e * a.apex.y, m * m * a.start.z + 2 * m * e * cz + e * e * a.apex.z);
+    g.quaternion.copy(_qy).multiply(tumble(a)); if (flat) g.quaternion.premultiply(faceTilt(.62 * e));
+    if (u >= 1) { a.phase = 'float'; a.t = 0; a.qFrom = g.quaternion.clone(); for (let i = 0; i < 6; i++) addP({ k: 2, x: g.position.x + rand(-.04, .04), y: g.position.y + rand(-.02, .06), z: g.position.z + rand(-.04, .04), vx: 0, vy: 0, vz: 0, s: rand(.008, .018), life: -rand(0, .3), max: rand(.4, .8), c: [1, 1, 1] }); }
+  } else {
+    const u = clamp(a.t / a.floatDur, 0, 1), fy = u * u * (3 - 2 * u), fh = u * u * (3 - 2 * u);
+    _side.set(a.land.x - a.apex.x, 0, a.land.z - a.apex.z); if (_side.lengthSq() < 1e-6) _side.set(1, 0, 0); _side.normalize().set(-_side.z, 0, _side.x);
+    const sw = Math.sin(u * Math.PI * a.swayF * 2 + a.ph) * a.swayA * Math.pow(1 - u, 1.1);
+    g.position.set(lerp(a.apex.x, a.land.x, fh) + _side.x * sw, lerp(a.apex.y, a.land.y, fy), lerp(a.apex.z, a.land.z, fh) + _side.z * sw);
+    _qb.copy(_qy); if (flat) _qb.premultiply(faceTilt(.62 * (1 - smoother(clamp((u - .5) / .5, 0, 1)))));
+    if (a.axis) _qa.copy(_qb).multiply(tumble(a)); else { const k = Math.min(1, u * 1.4); _qa.copy(a.qFrom).slerp(_qb, k * k * (3 - 2 * k)); }
+    _qb.setFromAxisAngle(_side, Math.sin(u * Math.PI * a.swayF * 2 + a.ph + 1.3) * a.rockA * Math.pow(1 - u, 1.3));
+    g.quaternion.copy(_qb).multiply(_qa);
+    if (u >= 1) { landObject(o); return; }
+  }
+  if (dt > 0) { a.vel.subVectors(g.position, a.prev).multiplyScalar(1 / dt); a.prev.copy(g.position); }
+  const hgt = g.position.y, d = o.drop, r = o.def.R * 2.2 * (1 + hgt * 2.5);
+  d.visible = true; d.position.set(g.position.x, .0003 + hfAt(g.position.x, g.position.z), g.position.z); d.scale.set(r, r, 1); d.material.opacity = clamp(.28 * (1 - hgt / .45), 0, .28) * (o.glass ? .6 : 1);
+  if (Math.random() < .22) addP({ k: 0, x: g.position.x + rand(-.5, .5) * o.def.R, y: g.position.y + rand(0, o.def.H), z: g.position.z + rand(-.5, .5) * o.def.R, vx: rand(-.02, .02), vy: rand(.01, .05), vz: rand(-.02, .02), sw: rand(-2, 2), s: rand(.0018, .004), life: 0, max: rand(.7, 1.3), c: colorV(pick(o.def.pal)), ph: rand(TAU) });
+}
+function landObject(o) {
+  const a = o.air, g = o.group;
+  g.position.copy(a.land); g.quaternion.setFromAxisAngle(UP, a.yaw); o.yaw = a.yaw;
+  o.air = null; o.landed = true; o.landedAt = performance.now(); o.x = a.land.x; o.z = a.land.z; o.drop.visible = false;
+  o.baseY = a.land.y; o.below = a.land.on || null; o.depth = o.below ? (o.below.depth || 0) + 1 : 0; if (o.below) o.below.above = o;
+  o.contact.visible = true; o.contactFade = 0; if (o.caustic) o.caustic.visible = true;
+  o.wobV.set(rand(-1, 1) * .8, rand(-1, 1) * .8);
+  g.updateMatrixWorld(true);
+  if (o.def.flat) { o.wtris = worldTris(o.meshes[0].geometry, o.meshes[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
+  play(o.glass ? 'glass_land' : 'ceramic_land', { gain: a.drop ? .14 : a.gentle ? .18 : .26, rate: o.def.pitch * rand(.96, 1.02), pan: panX(o.x), verb: .5 });
+  for (let i = 0; i < (a.drop ? 0 : 12); i++) { const ang = rand(TAU), r = o.def.R * rand(.9, 1.2); addP({ k: 0, x: o.x + Math.cos(ang) * r, y: o.baseY + .004, z: o.z + Math.sin(ang) * r, vx: Math.cos(ang) * .04, vy: rand(.02, .06), vz: Math.sin(ang) * .04, sw: rand(-2, 2), s: rand(.002, .004), life: 0, max: rand(.6, 1.1), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
+  if (!a.gentle) { TOSS.combo = 0; TOSS.timer = Math.min(TOSS.timer, rand(.3, .5)); }
+}
+function dissolve(o) {
+  if (o.dissolve) return;
+  o.dissolve = { t: 0 }; o.landed = false; o.drop.visible = false; collapse(o);
+  if (o.def.flat && o.wbox) { const b = o.wbox; o.wbox = null; hfRebuild(b); }
+}
+function stepObjects(dt, rdt) {
+  for (let i = objs.length - 1; i >= 0; i--) {
+    const o = objs[i];
+    if (o.air && !o.broken) { o.air.t += dt; o.air.T = (o.air.T || 0) + dt; placeAir(o, dt); }
+    if (o.contactFade !== undefined && o.contactFade < 1) { o.contactFade = Math.min(1, o.contactFade + rdt / .35); o.contact.material.opacity = o.contactA * o.contactFade; if (o.causticM) o.causticM.material.opacity = o.contactFade; }
+    if (o.dissolve) {
+      // breathed away into light
+      const d = o.dissolve; d.t += rdt; const u = clamp(d.t / .85, 0, 1), sc = 1 - u * u * u;
+      o.group.scale.setScalar(Math.max(.001, sc)); o.group.position.y = (o.baseY || 0) + .03 * easeOut(u);
+      if (Math.random() < .7) { const c = o.group.position; addP({ k: 0, x: c.x + rand(-1, 1) * o.def.R, y: c.y + rand(0, o.def.H), z: c.z + rand(-1, 1) * o.def.R, vx: rand(-.03, .03), vy: rand(.05, .15), vz: rand(-.03, .03), sw: rand(-3, 3), s: rand(.002, .005), life: 0, max: rand(.8, 1.4), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
+      if (u >= 1) { root.remove(o.group); root.remove(o.drop); objs.splice(i, 1); }
+    }
+  }
+  if (reform) return;
+  const flying = objs.filter(o => o.air && !o.broken && !o.air.gentle);
+  const ready = !flying.length || (TOSS.combo >= 4 && flying.length < 2 && flying.every(o => o.air.phase === 'float' && o.air.t > 1));
+  if (ready) { TOSS.timer -= dt; if (TOSS.timer <= 0) { launch(); TOSS.timer = TOSS.combo >= 4 ? rand(.9, 1.3) : rand(.45, .7); } }
+}
+// a soft rising note for every catch in the air; the run resets when one gets away
+function chime(n) {
+  if (!SFX.ctx || !SFX.on) return;
+  const steps = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24], f = 523.25 * Math.pow(2, steps[Math.min(n - 1, steps.length - 1)] / 12);
+  const A = SFX.ctx, t = A.currentTime + .03, g = A.createGain(), lp = A.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.075, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + 2.2);
+  for (const [m, a] of [[1, 1], [2.005, .28], [3.01, .08]]) { const o = A.createOscillator(), og = A.createGain(); o.frequency.value = f * m; og.gain.value = a; o.connect(og); og.connect(lp); o.start(t); o.stop(t + 2.3); }
+  lp.connect(g); g.connect(SFX.out); const v = A.createGain(); v.gain.value = .9; g.connect(v); v.connect(SFX.verb);
+}
+function whoosh() {
+  if (!SFX.ctx || !SFX.on) return;
+  const A = SFX.ctx, t = A.currentTime, n = A.createBufferSource(); n.buffer = SFX.noise;
+  const bp = A.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2; bp.frequency.setValueAtTime(320, t); bp.frequency.exponentialRampToValueAtTime(1300, t + .5);
+  const g = A.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + .18); g.gain.exponentialRampToValueAtTime(.0001, t + .75);
+  n.connect(bp); bp.connect(g); g.connect(SFX.out); n.start(t, Math.random() * .3); n.stop(t + .8);
+}
+
 /* --------------------------------------------------------------- rewind */
 // every piece lifts, turns and flies home along an arc, and the object closes up whole
 let reform = null;
@@ -1283,7 +1495,7 @@ const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 function startReform() {
   if (reform) return;
   const broken = objs.filter(o => o.broken);
-  if (!broken.length && !shards.length) { buildObjects(); return; }
+  if (!broken.length && !shards.length) { for (const o of objs) if (o.landed) dissolve(o); TOSS.timer = 1.4; TOSS.combo = 0; return; }
   HAM.pending = null;
   for (const o of objs) { if (o.staticMesh) { root.remove(o.staticMesh); o.staticMesh.geometry.dispose(); o.staticMesh = null; } o.staticDirty = false; }
   statics.length = 0;
@@ -1292,18 +1504,18 @@ function startReform() {
   for (const s of shards) {
     const o = s.obj, m = s.mesh, oi = Math.max(0, order.indexOf(o));
     m.visible = true; s.asleep = true;
-    const to = o.group.position.clone().setY(0).add(s.com.clone().applyQuaternion(o.group.quaternion));
+    const bq = o.breakQuat || o.group.quaternion, bp = o.breakPos || o.group.position;
+    const to = bp.clone().add(s.com.clone().applyQuaternion(bq));
     const from = m.position.clone(), mid = from.clone().lerp(to, .5);
     mid.y = Math.max(from.y, to.y) + .1 + rand(.03, .14) + o.def.H * .3;
     mid.x += rand(-.05, .05); mid.z += rand(-.05, .05);
     const dist = from.distanceTo(to);
-    s.rf = { from, mid, to, q0: m.quaternion.clone(), q1: o.group.quaternion.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 7) * (Math.random() < .5 ? -1 : 1),
+    s.rf = { from, mid, to, q0: m.quaternion.clone(), q1: bq.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 7) * (Math.random() < .5 ? -1 : 1),
       delay: oi * .09 + clamp(dist * 1.2, 0, .5) * rand(.3, 1) + rand(0, .25), dur: rand(1.05, 1.45) + dist * .6, done: false };
     list.push(s);
   }
   const byObj = new Map(); for (const s of list) { const a = byObj.get(s.obj) || []; a.push(s); byObj.set(s.obj, a); }
   reform = { t: 0, list, byObj, left: new Set(byObj.keys()), crumbA: 1 };
-  for (const o of broken) { o.group.position.y = 0; o.group.rotation.set(0, o.group.rotation.y, 0); }
   HF.h.fill(0);
 }
 function stepReform(rdt) {
@@ -1326,42 +1538,54 @@ function stepReform(rdt) {
   for (const o of [...R.left]) {
     const mine = R.byObj.get(o);
     const last = Math.max(...mine.map(s => s.rf.delay + s.rf.dur));
-    if (!o.rfSound && R.t > last - .95) { o.rfSound = true; play(o.glass ? 'glass_smash_rev' : 'ceramic_smash_rev', { gain: .55, rate: rand(.95, 1.02), pan: panX(o.x), verb: .8 }); }
+    if (!o.rfSound && R.t > last - .95) { o.rfSound = true; play(o.glass ? 'glass_smash_rev' : 'ceramic_smash_rev', { gain: .55, rate: rand(.95, 1.02), pan: panX(o.breakPos ? o.breakPos.x : o.x), verb: .8 }); }
     if (mine.every(s => s.rf.done)) {
       R.left.delete(o); o.rfSound = false;
       for (const s of mine) { root.remove(s.mesh); s.mesh.geometry.dispose(); }
-      if (o.broken) { o.broken = false; root.add(o.group); o.wob.set(0, 0); o.wobV.set(rand(-1, 1) * .6, rand(-1, 1) * .6); }
-      const c = new THREE.Vector3(o.x, o.def.H * .5 + .01, o.z);
-      flash.position.copy(c); flash.intensity = 1.2;
-      for (let i = 0; i < 70; i++) { const a = rand(TAU), r = o.def.R * rand(.6, 1.3); addP({ k: 0, x: o.x + Math.cos(a) * r, y: rand(0, o.def.H + .01), z: o.z + Math.sin(a) * r, vx: -Math.cos(a) * .05, vy: rand(.05, .25), vz: -Math.sin(a) * .05, sw: rand(-3, 3), s: rand(.002, .0055), life: 0, max: rand(.8, 1.8), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
-      for (let i = 0; i < 14; i++) addP({ k: 2, x: o.x + rand(-o.def.R, o.def.R), y: rand(.005, o.def.H + .01), z: o.z + rand(-o.def.R, o.def.R) * .5, vx: 0, vy: 0, vz: 0, s: rand(.01, .024), life: -rand(0, .4), max: rand(.4, .9), c: [1, 1, 1] });
+      if (o.broken) { o.broken = false; o.group.position.copy(o.breakPos); o.group.quaternion.copy(o.breakQuat); root.add(o.group); o.wob.set(0, 0); o.wobV.set(0, 0); driftDown(o); }
+      o.group.updateMatrixWorld(true); const c = o.group.localToWorld(new THREE.Vector3(0, o.def.H * .5, 0));
+      
+      for (let i = 0; i < 70; i++) { const a = rand(TAU), r = o.def.R * rand(.6, 1.3); addP({ k: 0, x: c.x + Math.cos(a) * r, y: c.y + rand(-.5, .5) * (o.def.H + .01), z: c.z + Math.sin(a) * r, vx: -Math.cos(a) * .05, vy: rand(.05, .25), vz: -Math.sin(a) * .05, sw: rand(-3, 3), s: rand(.002, .0055), life: 0, max: rand(.8, 1.8), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
+      for (let i = 0; i < 14; i++) addP({ k: 2, x: c.x + rand(-o.def.R, o.def.R), y: c.y + rand(-.5, .5) * o.def.H, z: c.z + rand(-o.def.R, o.def.R) * .5, vx: 0, vy: 0, vz: 0, s: rand(.01, .024), life: -rand(0, .4), max: rand(.4, .9), c: [1, 1, 1] });
       play(o.glass ? 'glass_land' : 'ceramic_land', { gain: .35, rate: o.def.pitch * .9, pan: panX(o.x), verb: .7 });
     }
   }
   if (!R.left.size) {
     shards = shards.filter(s => !R.list.includes(s)); reform = null; crumbs.reset();
-    HF.h.fill(0); for (const o of objs) if (o.def.flat && !o.broken) hfRaster(o.wtris);
+    HF.h.fill(0); for (const o of objs) if (o.def.flat && !o.broken && o.landed && o.wtris) hfRaster(o.wtris);
   }
 }
 
 /* ------------------------------------------------------------------- loop */
 let last = performance.now(), glintT = 0;
+// keep the frame rate up: step the render resolution down when frames run long, back up when there is room
+const FT = { ema: 1 / 60, slow: 1 / 60, pr: prFor(), t: 0, top: prFor(), born: performance.now() };
+function adaptQuality(now) {
+  FT.slow = FT.slow * .97 + FT.ema * .03;                       // a slower average: only sustained slowness counts
+  if (now - FT.born < 4000 || now - FT.t < 1200 || now - (FT.hit || 0) < 1500) return; FT.t = now;
+  let pr = FT.pr;
+  if (FT.slow > 1 / 42 && pr > PR_FLOOR) pr = Math.max(Math.min(PR_FLOOR, DPR), pr - .15);
+  else if (FT.slow < 1 / 54 && pr < FT.top) pr = Math.min(FT.top, pr + .25);
+  if (pr !== FT.pr) { FT.pr = pr; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * pr * .5; }
+}
 function frame(now) {
-  const rdt = Math.min(.05, (now - last) / 1000); last = now;
+  const raw = Math.min(.05, (now - last) / 1000); last = now;
+  FT.ema = FT.ema * .9 + raw * .1;
+  const rdt = clamp(raw, FT.ema * .6, FT.ema * 1.6);
+  adaptQuality(now);
   let ts = 1;
   if (freezeT > 0) { freezeT -= rdt; ts = .02; } else if (slowT > 0) { slowT -= rdt; const u = 1 - slowT / slowDur; ts = lerp(slowMin, 1, u * u); }
   const dt = rdt * ts;
   for (const o of objs) {
-    if (o.appear < 1) { o.appear = Math.min(1, o.appear + rdt / .8); const e = easeOut(clamp(o.appear, 0, 1)); o.group.position.y = (1 - e) * .03; o.group.visible = o.appear > 0; }
     o.wobV.x += (-o.wob.x * 320 - o.wobV.x * 10) * dt; o.wobV.y += (-o.wob.y * 320 - o.wobV.y * 10) * dt; o.wob.addScaledVector(o.wobV, dt);
-    if (!o.def.flat && !o.broken) { o.group.rotation.z = -o.wob.x * .05; o.group.rotation.x = o.wob.y * .05; }
+    if (!o.def.flat && !o.broken && o.landed && !o.dissolve) { o.group.rotation.set(o.wob.y * .05, o.yaw || 0, -o.wob.x * .05); }
   }
   const sub = dt > 0 ? Math.max(1, Math.ceil(dt / (1 / 240))) : 0, h = dt / Math.max(1, sub);
   for (let k = 0; k < sub; k++) for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; if (s.asleep) continue; if (stepShard(s, h)) settle(s); }
   for (const o of objs) if (o.staticDirty) { o.staticT = (o.staticT || 0) + rdt; const moving = shards.some(s => !s.asleep && s.obj === o); if (o.staticT > .35 || !moving) rebuildStatic(o); }
   stepReform(rdt);
+  stepObjects(rdt * lerp(1, ts, .5), rdt);
   crumbs.step(dt); stepParticles(dt, rdt); stepRings(dt);
-  if (flash.intensity > 0) flash.intensity = Math.max(0, flash.intensity * Math.exp(-rdt * 18) - .01);
   glintT -= rdt;
   if (glintT < 0 && statics.length) { glintT = rand(.08, .25);
     for (let k = 0; k < 6; k++) { const s = pick(statics); if (s.obj.glass || Math.random() < .1) { const b = s.wbox; addP({ k: 2, x: rand(b.min.x, b.max.x), y: b.max.y + .001, z: rand(b.min.z, b.max.z), vx: 0, vy: 0, vz: 0, s: rand(.008, .02), life: 0, max: rand(.5, 1.1), c: [1, 1, 1] }); break; } } }
@@ -1374,7 +1598,13 @@ function frame(now) {
   // while the view is turning the table slides under a still pointer: rest the hammer, aim again once it settles
   const turning = now - (VIEW.lastOrbit || -1e9) < 220 || Math.abs(VIEW.tAz - VIEW.az) + Math.abs(VIEW.tEl - VIEW.el) + Math.abs(VIEW.tDist - VIEW.dist) / VIEW.fit > .004;
   if (!HAM.touch) {
-    if (hoverXY && !turning) { if (HAM.t > .12) { const h = pickAt(hoverXY[0], hoverXY[1]); if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); } } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
+    if (hoverXY && !turning) { if (HAM.t > .12) {
+        HOV.n++;
+        const moved = !HOV.xy || HOV.xy[0] !== hoverXY[0] || HOV.xy[1] !== hoverXY[1];
+        if (moved || HOV.n % 3 === 0 || !HOV.obj) { const h = pickAt(hoverXY[0], hoverXY[1]); HOV.xy = hoverXY.slice();
+          if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); HOV.obj = h.obj && h.obj.air ? h.obj : null; if (HOV.obj) { HOV.obj.group.updateMatrixWorld(true); HOV.local = HOV.obj.group.worldToLocal(h.point.clone()); } } }
+        else if (HOV.obj && HOV.obj.air && !HOV.obj.broken) { HOV.obj.group.updateMatrixWorld(true); HAM.point.copy(HOV.obj.group.localToWorld(HOV.local.clone())); }
+      } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
     else HAM.vis = Math.max(0, HAM.vis - rdt * 10);
   }
   hammerUpdate(rdt);
@@ -1385,6 +1615,7 @@ function frame(now) {
 /* ------------------------------------------------------------------ input */
 // one finger or a click: the hammer. two fingers, a trackpad swipe or a right-drag: turn the table. pinch: closer.
 let hoverXY = null;
+const HOV = { n: 0, xy: null, obj: null, local: null };
 const cv = renderer.domElement, touches = new Map();
 let tapTimer = null, tapAt = null, gesture = null, rdrag = null;
 function swingAt(x, y, touch) {
@@ -1392,6 +1623,7 @@ function swingAt(x, y, touch) {
   const hit = pickAt(x, y); if (!hit) return;
   if (HAM.pending) strike(HAM.pending);
   HAM.touch = touch; HAM.point.copy(hit.point); HAM.normal.copy(hit.normal);
+  if (hit.obj) { hit.obj.group.updateMatrixWorld(true); hit.local = hit.obj.group.worldToLocal(hit.point.clone()); }
   HAM.vis = 1; HAM.hideT = 1.1; HAM.k0 = Math.max(0, Math.min(1, HAM.k ?? 1)); HAM.t = 0; HAM.pending = hit;
 }
 function gestureState() { const p = [...touches.values()]; return { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2, d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) }; }
@@ -1429,17 +1661,17 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 document.addEventListener('mouseleave', () => { if (!HAM.touch) { HAM.vis = 0; hoverXY = null; } });
 addEventListener('resize', () => {
-  renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * DPR * .5;
-  const tall = innerWidth / innerHeight < .9;
-  if ((tall ? 'tall' : 'wide') !== layoutKey && !objs.some(o => o.broken)) buildObjects(); else fitCamera(false);
+  FT.top = prFor(); FT.pr = Math.min(FT.pr, FT.top); renderer.setPixelRatio(FT.pr); renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * FT.pr * .5;
+  fitCamera(false);
 });
 document.getElementById('sound').addEventListener('click', e => { SFX.on = !SFX.on; e.currentTarget.setAttribute('aria-pressed', SFX.on); audioInit(); });
 document.getElementById('reset').addEventListener('click', () => startReform());
 window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, o.broken]), shards: shards.length, statics: statics.length, flying: shards.filter(s => !s.asleep).length }),
   shardScreen: () => { const s = pick(shards); if (!s) return null; const v = s.mesh.position.clone().project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
   reform: () => startReform(), reforming: () => !!reform,
-  screen: kind => { const o = objs.find(q => q.kind === kind && !q.broken); if (!o) return null; const v = new THREE.Vector3(o.x, o.def.flat ? .015 : o.H * .55, o.z).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; } };
-buildObjects();
+  air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase]; },
+  combo: () => TOSS.combo, queue: k => { TOSS.bag.push(...k); } };
+clearTable();
 requestAnimationFrame(frame);
 requestAnimationFrame(() => document.getElementById('veil').classList.add('gone'));
 </script>
