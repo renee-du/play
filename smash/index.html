@@ -49,7 +49,8 @@ function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.h
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 const DPR = Math.min(window.devicePixelRatio || 1, 1.75);
 // full screen on a large display is a lot of pixels: cap the frame at about 2.4 million, which still looks sharp
-const prFor = () => clamp(Math.min(DPR, Math.sqrt(2.4e6 / (innerWidth * innerHeight))), .75, DPR);
+const PR_FLOOR = DPR >= 2 ? 1.25 : 1;
+const prFor = () => clamp(Math.min(DPR, Math.sqrt(3.6e6 / (innerWidth * innerHeight))), Math.min(PR_FLOOR, DPR), DPR);
 renderer.setPixelRatio(prFor());
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -1549,12 +1550,13 @@ function stepReform(rdt) {
 /* ------------------------------------------------------------------- loop */
 let last = performance.now(), glintT = 0;
 // keep the frame rate up: step the render resolution down when frames run long, back up when there is room
-const FT = { ema: 1 / 60, pr: prFor(), t: 0, top: prFor() };
+const FT = { ema: 1 / 60, slow: 1 / 60, pr: prFor(), t: 0, top: prFor(), born: performance.now() };
 function adaptQuality(now) {
-  if (now - FT.t < 900) return; FT.t = now;
+  FT.slow = FT.slow * .97 + FT.ema * .03;                       // a slower average: only sustained slowness counts
+  if (now - FT.born < 4000 || now - FT.t < 1200) return; FT.t = now;
   let pr = FT.pr;
-  if (FT.ema > 1 / 52 && pr > .75) pr = Math.max(.75, pr - .2);
-  else if (FT.ema < 1 / 58 && pr < FT.top) pr = Math.min(FT.top, pr + .1);
+  if (FT.slow > 1 / 42 && pr > PR_FLOOR) pr = Math.max(Math.min(PR_FLOOR, DPR), pr - .15);
+  else if (FT.slow < 1 / 54 && pr < FT.top) pr = Math.min(FT.top, pr + .25);
   if (pr !== FT.pr) { FT.pr = pr; renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); pMat.uniforms.uScale.value = innerHeight * pr * .5; }
 }
 function frame(now) {
