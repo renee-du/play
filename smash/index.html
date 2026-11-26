@@ -1248,41 +1248,26 @@ function layoutPanel(P, X, Y) {
   const pw = Math.max(.02, x1 - x0), ph = Math.max(.02, y1 - y0), ASP = clamp(pw / ph, .62, 1.6);
   let Hp = Math.sqrt(A / FILL / ASP), Wp = Hp * ASP;
   if (Math.min(Wp, Hp) < maxExt * 2.2) { const k = maxExt * 2.2 / Math.min(Wp, Hp); Wp *= k; Hp *= k; }
-  const c = Math.sqrt(Wp * Hp / 46000), nx = Math.ceil(Wp / c), ny = Math.ceil(Hp / c); Wp = nx * c; Hp = ny * c;
-  const occ = new Uint8Array(nx * ny);
-  const R = Math.ceil(Math.hypot(nx, ny)), buckets = Array.from({ length: R + 1 }, () => []);
-  for (let dy = -ny; dy <= ny; dy++) for (let dx = -nx; dx <= nx; dx++) { const r = Math.round(Math.hypot(dx, dy)); if (r <= R) buckets[r].push(dx, dy); }
-  const SP = Int16Array.from(buckets.flat());
-  const maskOf = (p, th) => {
-    const cs = Math.cos(th), sn = Math.sin(th), T = p.T, cells = new Set(), out = [];
-    for (let i = 0; i < T.length; i += 6) {
-      const ax = (T[i] * cs - T[i + 1] * sn) / c, ay = (T[i] * sn + T[i + 1] * cs) / c, bx = (T[i + 2] * cs - T[i + 3] * sn) / c, by = (T[i + 2] * sn + T[i + 3] * cs) / c, qx = (T[i + 4] * cs - T[i + 5] * sn) / c, qy = (T[i + 4] * sn + T[i + 5] * cs) / c;
-      const det = (by - qy) * (ax - qx) + (qx - bx) * (ay - qy); if (Math.abs(det) < 1e-12) continue;
-      for (let oy = Math.floor(Math.min(ay, by, qy)); oy <= Math.ceil(Math.max(ay, by, qy)); oy++) for (let ox = Math.floor(Math.min(ax, bx, qx)); ox <= Math.ceil(Math.max(ax, bx, qx)); ox++) {
-        const l1 = ((by - qy) * (ox - qx) + (qx - bx) * (oy - qy)) / det, l2 = ((qy - ay) * (ox - qx) + (ax - qx) * (oy - qy)) / det;
-        if (l1 >= -.02 && l2 >= -.02 && 1 - l1 - l2 >= -.02) { const key = ox * 4096 + oy; if (!cells.has(key)) { cells.add(key); out.push(ox, oy); } } }
-    }
-    if (!out.length) out.push(0, 0); return out;
-  };
-  const fits = (m, cx, cy) => { for (let i = 0; i < m.length; i += 2) { const x = cx + m[i], y = cy + m[i + 1]; if (x < 0 || y < 0 || x >= nx || y >= ny || occ[y * nx + x]) return false; } return true; };
   const sc = Math.min(Wp * .94 / pw, Hp * .94 / ph), mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-  // pieces nearest the middle of the pile are placed first, then outward, so each lands beside the neighbours it lay beside
-  for (const p of P.slice().sort((a, b) => Math.hypot(a.lx - mx, a.ly - my) - Math.hypot(b.lx - mx, b.ly - my))) {
-    const x = clamp((p.lx - mx) * sc, -Wp / 2, Wp / 2), y = clamp((p.ly - my) * sc, -Hp / 2, Hp / 2);
-    p.tx = x; p.ty = y;
-    // turned exactly the way it lay; a slight turn only if it cannot fit nearby otherwise
-    const t = p.thLay, ths = [t, t + .12, t - .12, t + .25, t - .25], masks = ths.map(a => maskOf(p, a));
-    const tcx = clamp(Math.floor((x + Wp / 2) / c), 0, nx - 1), tcy = clamp(Math.floor((y + Hp / 2) / c), 0, ny - 1);
-    let best = null; const near = Math.round(SP.length * .02) & ~1;
-    for (let k = 0; k < near && !best; k += 2) { const cx = tcx + SP[k], cy = tcy + SP[k + 1]; if (cx < 0 || cy < 0 || cx >= nx || cy >= ny || occ[cy * nx + cx]) continue;
-      if (fits(masks[0], cx, cy)) best = [cx, cy, 0]; }
-    for (let k = 0; k < SP.length && !best; k += 2) { const cx = tcx + SP[k], cy = tcy + SP[k + 1]; if (cx < 0 || cy < 0 || cx >= nx || cy >= ny || occ[cy * nx + cx]) continue;
-      for (let r = 0; r < ths.length; r++) if (fits(masks[r], cx, cy)) { best = [cx, cy, r]; break; } }
-    if (!best) best = [tcx, tcy, 0];
-    const [cx, cy, r] = best, m = masks[r];
-    for (let i = 0; i < m.length; i += 2) { const X2 = cx + m[i], Y2 = cy + m[i + 1]; if (X2 >= 0 && Y2 >= 0 && X2 < nx && Y2 < ny) occ[Y2 * nx + X2] = 1; }
-    p.x = -Wp / 2 + (cx + .5) * c; p.y = -Hp / 2 + (cy + .5) * c; p.th = ths[r];
+  // every piece is tied to where it lay; pieces that would overlap ease apart just enough, like shards nudged on a table.
+  // Neighbours stay neighbours, nobody is turned, and what small gaps remain are closed by the melt
+  const n = P.length, X0 = new Float64Array(n), Y0 = new Float64Array(n), px = new Float64Array(n), py = new Float64Array(n), rr = new Float64Array(n);
+  P.forEach((p, i) => { X0[i] = px[i] = clamp((p.lx - mx) * sc, -Wp / 2, Wp / 2); Y0[i] = py[i] = clamp((p.ly - my) * sc, -Hp / 2, Hp / 2); rr[i] = Math.sqrt(p.area / Math.PI) * .9; p.tx = X0[i]; p.ty = Y0[i]; });
+  const fx = new Float64Array(n), fy = new Float64Array(n);
+  for (let it = 0; it < 160; it++) {
+    fx.fill(0); fy.fill(0);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = px[j] - px[i], dy = py[j] - py[i], R = rr[i] + rr[j]; if (Math.abs(dx) > R || Math.abs(dy) > R) continue;
+      const d = Math.hypot(dx, dy); if (d >= R) continue;
+      const o = (R - d) * .5, ux = d > 1e-9 ? dx / d : Math.cos(i * 2.4), uy = d > 1e-9 ? dy / d : Math.sin(i * 2.4);
+      const wi = rr[j] ** 2 / (rr[i] ** 2 + rr[j] ** 2), wj = 1 - wi;   // the smaller piece gives way
+      fx[i] -= ux * o * wi * 2; fy[i] -= uy * o * wi * 2; fx[j] += ux * o * wj * 2; fy[j] += uy * o * wj * 2; }
+    const pull = .04;
+    for (let i = 0; i < n; i++) {
+      px[i] += fx[i] * .5 + (X0[i] - px[i]) * pull; py[i] += fy[i] * .5 + (Y0[i] - py[i]) * pull;
+      const hx = Wp / 2 - rr[i] * .6, hy = Hp / 2 - rr[i] * .6; px[i] = clamp(px[i], -hx, hx); py[i] = clamp(py[i], -hy, hy); }
   }
+  P.forEach((p, i) => { p.x = px[i]; p.y = py[i]; p.th = p.thLay; });
   return { Wp, Hp };
 }
 function panelTextures(P, Wp, Hp) {
@@ -1768,7 +1753,7 @@ document.getElementById('sound').addEventListener('click', e => { SFX.on = !SFX.
 document.getElementById('reset').addEventListener('click', () => startReform());
 window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, o.broken]), shards: shards.length, statics: statics.length, flying: shards.filter(s => !s.asleep).length }),
   shardScreen: () => { const s = pick(shards); if (!s) return null; const v = s.mesh.position.clone().project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
-  reform: () => startReform(), reforming: () => !!reform, objs: () => objs, THREE, win: () => WIN.mode, enterWindow, dtMax: v => { DT_MAX = v; }, spin: a => { WIN.spin = a; },
+  reform: () => startReform(), reforming: () => !!reform, objs: () => objs, THREE, win: () => WIN.mode, winObj: () => WIN, enterWindow, dtMax: v => { DT_MAX = v; }, spin: a => { WIN.spin = a; },
   screen: kind => { const o = objs.find(q => q.kind === kind && !q.broken); if (!o) return null; const v = new THREE.Vector3(o.x, o.def.flat ? .015 : o.H * .55, o.z).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; } };
 buildObjects();
 requestAnimationFrame(frame);
