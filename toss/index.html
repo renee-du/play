@@ -92,7 +92,6 @@ key.shadow.camera.near = 0.5; key.shadow.camera.far = 6;
 key.shadow.radius = 3.5; key.shadow.blurSamples = 8; key.shadow.bias = -0.0004;
 scene.add(key, key.target);
 const rim = new THREE.DirectionalLight(0xeef3ff, 0.55); rim.position.set(1.6, 1.2, -1.5); scene.add(rim);
-const flash = new THREE.PointLight(0xfff4e6, 0, 0.9, 2); scene.add(flash);
 
 const table = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.24, color: 0x2a2018 }));
 table.rotation.x = -Math.PI / 2; table.receiveShadow = true; scene.add(table);
@@ -1132,7 +1131,7 @@ let freezeT = 0, slowT = 0, slowDur = 1, slowMin = 1, shake = 0;
 function juice(freeze, smin, sdur, sh) { freezeT = Math.max(freezeT, freeze); if (smin < 1) { slowMin = Math.min(slowT > 0 ? slowMin : 1, smin); slowT = slowDur = sdur; } shake = Math.max(shake, sh); }
 function puff(x, y, z, n = 1) { for (let i = 0; i < 3 * n; i++) addP({ k: 1, x: x + rand(-.01, .01), y: y + rand(0, .01), z: z + rand(-.01, .01), vx: rand(-.08, .08), vy: rand(.02, .12), vz: rand(-.08, .08), s: rand(.012, .026), a: rand(.12, .22), life: 0, max: rand(.9, 1.6), c: colorV(pick(['#cfc6b8', '#ddd6ca', '#c4baaa'])) }); }
 function burst(p, def, power, glassy) {
-  flash.position.set(p.x, p.y + .03, p.z); flash.intensity = 2.2 * power;
+  
   const nm = Math.round((glassy ? 160 : 110) * power);
   for (let i = 0; i < nm; i++) { const a = rand(TAU), el = rand(-.3, 1.2), sp = rand(.25, 1.6) * power;
     addP({ k: 0, x: p.x, y: p.y, z: p.z, vx: Math.cos(a) * Math.cos(el) * sp, vy: Math.sin(el) * sp * .7, vz: Math.sin(a) * Math.cos(el) * sp, sw: rand(-3, 3), s: rand(.0025, .007), life: 0, max: rand(1.1, 2.6), c: colorV(pick(def.pal)), ph: rand(TAU) }); }
@@ -1160,6 +1159,7 @@ function centroidOf(part, tris) { let x = 0, y = 0, z = 0, n = 0; for (let i = 0
 // the first blow breaks an object into a handful of large pieces; every blow after makes them smaller
 const FIRST_BLOW = { glass: [14, .05, .5], flat: [8, .07, .6], ceramic: [11, .06, .58] };
 function smash(o, hitWorld) {
+  FT.hit = performance.now();
   o.group.updateMatrixWorld(true);
   const wasAir = !!o.air, objVel = wasAir ? o.air.vel.clone() : new THREE.Vector3();
   o.breakPos = o.group.position.clone(); o.breakQuat = o.group.quaternion.clone();
@@ -1197,6 +1197,7 @@ function smash(o, hitWorld) {
   if (wasAir) { TOSS.combo++; TOSS.timer = Math.min(TOSS.timer, rand(.45, .7)); }
 }
 function breakShard(s, hitWorld, power) {
+  FT.hit = performance.now();
   const o = s.obj, part = o.parts[s.pi];
   const qi = s.mesh.quaternion.clone().invert();
   const Il = hitWorld.clone().sub(s.mesh.position).applyQuaternion(qi).add(s.com), I = [Il.x, Il.y, Il.z];
@@ -1276,7 +1277,7 @@ function strike(hit) {
     for (const s of near) { mats.add(s.obj.glass); breakShard(s, p, 1); }
     for (const s of statics.slice()) { const d = s.mesh.position.distanceTo(p); if (d < .07 && Math.random() < .7) { wake(s); s.v.set((s.mesh.position.x - p.x) * 6, rand(.3, .9) * (1 - d / .07), (s.mesh.position.z - p.z) * 6); s.w.set(rand(-6, 6), rand(-6, 6), rand(-6, 6)); s.bounces = 1; } }
     const glassy = mats.has(true) && !mats.has(false);
-    flash.position.set(p.x, p.y + .03, p.z); flash.intensity = 1;
+    
     for (let i = 0; i < 40; i++) { const a = rand(TAU), sp = rand(.15, .7); addP({ k: 0, x: p.x, y: p.y + .004, z: p.z, vx: Math.cos(a) * sp, vy: rand(.05, .5), vz: Math.sin(a) * sp, sw: rand(-3, 3), s: rand(.002, .005), life: 0, max: rand(.7, 1.6), c: colorV(pick(def.pal)), ph: rand(TAU) }); }
     for (let i = 0; i < 10; i++) { const a = rand(TAU), sp = rand(.1, .6); crumbs.add(p.x, p.y + .003, p.z, Math.cos(a) * sp, rand(.4, 1.3), Math.sin(a) * sp, rand(.0007, .0016), pick(def.pal.concat([def.edgeCol]))); }
     if (glassy) for (let i = 0; i < 8; i++) addP({ k: 2, x: p.x + rand(-.03, .03), y: p.y + rand(0, .03), z: p.z + rand(-.03, .03), vx: 0, vy: 0, vz: 0, s: rand(.01, .022), life: -rand(0, .3), max: rand(.35, .7), c: [1, 1, 1] });
@@ -1388,7 +1389,7 @@ function faceTilt(ang) { // plates lean their painted face toward you
 // thrown with a spin that slows smoothly and finishes on a whole turn, so it arrives upright without a snap
 const _qs = new THREE.Quaternion();
 function tumble(a) {
-  const T = clamp(a.T / (a.riseDur + a.floatDur * .85), 0, 1);
+  const T = clamp((a.T || 0) / (a.riseDur + a.floatDur * .85), 0, 1);
   // a lean that rises and settles back, not a flip; plates just turn slowly flat
   return _qs.setFromAxisAngle(a.axis, a.flat ? a.turn * (1 - Math.pow(1 - T, 2.6)) : a.turn * Math.sin(Math.PI * T));
 }
@@ -1543,7 +1544,7 @@ function stepReform(rdt) {
       for (const s of mine) { root.remove(s.mesh); s.mesh.geometry.dispose(); }
       if (o.broken) { o.broken = false; o.group.position.copy(o.breakPos); o.group.quaternion.copy(o.breakQuat); root.add(o.group); o.wob.set(0, 0); o.wobV.set(0, 0); driftDown(o); }
       o.group.updateMatrixWorld(true); const c = o.group.localToWorld(new THREE.Vector3(0, o.def.H * .5, 0));
-      flash.position.copy(c); flash.intensity = 1.2;
+      
       for (let i = 0; i < 70; i++) { const a = rand(TAU), r = o.def.R * rand(.6, 1.3); addP({ k: 0, x: c.x + Math.cos(a) * r, y: c.y + rand(-.5, .5) * (o.def.H + .01), z: c.z + Math.sin(a) * r, vx: -Math.cos(a) * .05, vy: rand(.05, .25), vz: -Math.sin(a) * .05, sw: rand(-3, 3), s: rand(.002, .0055), life: 0, max: rand(.8, 1.8), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
       for (let i = 0; i < 14; i++) addP({ k: 2, x: c.x + rand(-o.def.R, o.def.R), y: c.y + rand(-.5, .5) * o.def.H, z: c.z + rand(-o.def.R, o.def.R) * .5, vx: 0, vy: 0, vz: 0, s: rand(.01, .024), life: -rand(0, .4), max: rand(.4, .9), c: [1, 1, 1] });
       play(o.glass ? 'glass_land' : 'ceramic_land', { gain: .35, rate: o.def.pitch * .9, pan: panX(o.x), verb: .7 });
@@ -1561,7 +1562,7 @@ let last = performance.now(), glintT = 0;
 const FT = { ema: 1 / 60, slow: 1 / 60, pr: prFor(), t: 0, top: prFor(), born: performance.now() };
 function adaptQuality(now) {
   FT.slow = FT.slow * .97 + FT.ema * .03;                       // a slower average: only sustained slowness counts
-  if (now - FT.born < 4000 || now - FT.t < 1200) return; FT.t = now;
+  if (now - FT.born < 4000 || now - FT.t < 1200 || now - (FT.hit || 0) < 1500) return; FT.t = now;
   let pr = FT.pr;
   if (FT.slow > 1 / 42 && pr > PR_FLOOR) pr = Math.max(Math.min(PR_FLOOR, DPR), pr - .15);
   else if (FT.slow < 1 / 54 && pr < FT.top) pr = Math.min(FT.top, pr + .25);
@@ -1585,7 +1586,6 @@ function frame(now) {
   stepReform(rdt);
   stepObjects(rdt * lerp(1, ts, .5), rdt);
   crumbs.step(dt); stepParticles(dt, rdt); stepRings(dt);
-  if (flash.intensity > 0) flash.intensity = Math.max(0, flash.intensity * Math.exp(-rdt * 18) - .01);
   glintT -= rdt;
   if (glintT < 0 && statics.length) { glintT = rand(.08, .25);
     for (let k = 0; k < 6; k++) { const s = pick(statics); if (s.obj.glass || Math.random() < .1) { const b = s.wbox; addP({ k: 2, x: rand(b.min.x, b.max.x), y: b.max.y + .001, z: rand(b.min.z, b.max.z), vx: 0, vy: 0, vz: 0, s: rand(.008, .02), life: 0, max: rand(.5, 1.1), c: [1, 1, 1] }); break; } } }
