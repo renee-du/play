@@ -517,7 +517,7 @@ function makeKinds() {
     const part = lathe(pts, { mats: ONE, uvO: planUV(R), uvI: planUV(R), fx, fy, nu: o.nu || 190, th0: 0 });
     return { parts: [part], mats: [g], flat: true, glass: true, tint, R, H: .016, pal, edgeCol: pal[2], pitch };
   };
-  K.plateClear = plate(.125, '#bfd3cd', .3, ['#e2efec', '#9fb9b2', '#ffffff', '#c4dad4'], .85, { burst: 32, nu: 200 });
+  K.plateSalmon = plate(.12, '#e8876c', .52, ['#ec9a82', '#b4513a', '#fbd9cd', '#f2b6a3'], .86, { nu: 170 });
   K.dishCobalt = plate(.07, '#2343b4', .62, ['#2c4fc4', '#13277a', '#b4c4ff', '#6a88e6'], 1.12, { scallop: 0, nu: 110 });
   return K;
 }
@@ -527,13 +527,13 @@ const LAYOUTS = {
     ['bottleWine', -.47, -.2], ['bottleAmber', -.38, -.21], ['bottleTeal', -.31, -.19], ['bottleOlive', -.24, -.21], ['bottleClear', -.17, -.195],
     ['pitcher', .005, -.175], ['wineRose', .14, -.205], ['wineSlate', .235, -.215], ['vaseGlass', .34, -.195],
     ['tumblerPink', -.36, -.005], ['scallop', -.235, -.02], ['highball', -.125, -.015], ['bowlAmber', .03, -.005], ['dishCobalt', .21, .01],
-    ['plateClear', -.3, .2], ['bowlSea', -.03, .195], ['scallop', .15, .2],
+    ['plateSalmon', -.3, .2], ['bowlSea', -.03, .195], ['scallop', .15, .2],
   ],
   tall: [
     ['bottleWine', -.22, -.44], ['bottleAmber', -.135, -.45], ['bottleTeal', -.065, -.43], ['bottleOlive', .005, -.45], ['bottleClear', .075, -.43], ['wineRose', .165, -.44], ['vaseGlass', .26, -.43],
     ['pitcher', -.12, -.215], ['wineSlate', .045, -.225], ['tumblerPink', .14, -.22], ['scallop', .235, -.225],
     ['highball', -.2, 0], ['bowlAmber', -.04, 0], ['scallop', .15, .005],
-    ['plateClear', -.12, .2], ['dishCobalt', .15, .205],
+    ['plateSalmon', -.12, .2], ['dishCobalt', .15, .205],
     ['bowlSea', .01, .415],
   ],
 };
@@ -1228,21 +1228,20 @@ function flatPiece(s) {
   const mat = s.obj.def.mats[part.mats.outer], src = new THREE.Color(mat.userData.tint || '#dddddd'), rgb = {}; src.getRGB(rgb, THREE.SRGBColorSpace);
   const chroma = Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b), clear = chroma < .12, hsl = {}; src.getHSL(hsl);
   // no two pieces of hand-made glass are quite the same
-  const col = clear ? new THREE.Color().setHSL(.43 + rand(-.03, .03), .22, .8 + rand(-.04, .04)) : new THREE.Color().setHSL((hsl.h + rand(-.018, .018) + 1) % 1, clamp(hsl.s * rand(.85, 1.05), 0, 1), clamp(hsl.l + rand(-.07, .07), .3, .66));
-  return { s, e1, e2, n, T, area, ext, ang0: .5 * Math.atan2(2 * sxy, sxx - syy), col, dens: clear ? rand(.16, .26) : rand(.46, .66), sa: rand(TAU), rank: clear ? 1000 : (hsl.h * 360 - 25 + 720) % 360, r1: Math.random(), r2: Math.random(), pal: s.obj.def.pal };
+  const col = clear ? new THREE.Color().setHSL(.43 + rand(-.03, .03), .16, .7 + rand(-.05, .05)) : new THREE.Color().setHSL((hsl.h + rand(-.018, .018) + 1) % 1, clamp(hsl.s * rand(.85, 1.05), 0, 1), clamp(hsl.l + rand(-.07, .07), .3, .66));
+  return { s, e1, e2, n, T, area, ext, ang0: .5 * Math.atan2(2 * sxy, sxx - syy), col, dens: clear ? rand(.4, .5) : rand(.72, .86), sa: rand(TAU), rank: clear ? 1000 : (hsl.h * 360 - 25 + 720) % 360, r1: Math.random(), r2: Math.random(), pal: s.obj.def.pal };
 }
-function layoutPanel(P) {
-  const A = P.reduce((a, p) => a + p.area, 0), maxExt = Math.max(...P.map(p => p.ext)), FILL = .7, ASP = .74;
+function layoutPanel(P, X, Y) {
+  // the window keeps the pile as it lay: each piece goes as near as it can to where it was, turned the way it was lying
+  const A = P.reduce((a, p) => a + p.area, 0), maxExt = Math.max(...P.map(p => p.ext)), FILL = .74;
+  const q = (arr, f) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(f * a.length))]; };
+  for (const p of P) { p.lx = p.wx * X.x + p.wz * X.z; p.ly = p.wx * Y.x + p.wz * Y.z; }
+  const lxs = P.map(p => p.lx), lys = P.map(p => p.ly), x0 = q(lxs, .04), x1 = q(lxs, .96), y0 = q(lys, .04), y1 = q(lys, .96);
+  const pw = Math.max(.02, x1 - x0), ph = Math.max(.02, y1 - y0), ASP = clamp(pw / ph, .62, 1.6);
   let Hp = Math.sqrt(A / FILL / ASP), Wp = Hp * ASP;
-  if (Wp < maxExt * 2.4) { Wp = maxExt * 2.4; Hp = Wp / ASP; }
+  if (Math.min(Wp, Hp) < maxExt * 2.2) { const k = maxExt * 2.2 / Math.min(Wp, Hp); Wp *= k; Hp *= k; }
   const c = Math.sqrt(Wp * Hp / 46000), nx = Math.ceil(Wp / c), ny = Math.ceil(Hp / c); Wp = nx * c; Hp = ny * c;
   const occ = new Uint8Array(nx * ny);
-  // the design: a rose of colour, amber at the heart, then greens, teals, blues and rose, and clear glass toward the corners
-  const yc = Hp * .06, PW = 2.6, field = (x, y) => (Math.abs(x / (Wp / 2)) ** PW + Math.abs((y - yc) / (Hp / 2)) ** PW) ** (1 / PW);
-  const ds = new Float32Array(nx * ny); for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) ds[iy * nx + ix] = field(-Wp / 2 + (ix + .5) * c, -Hp / 2 + (iy + .5) * c);
-  ds.sort();
-  let cum = 0; for (const p of P.slice().sort((a, b) => a.rank - b.rank || b.area - a.area)) { const q = (cum + p.area / 2) / A; cum += p.area; p.dq = ds[Math.min(ds.length - 1, Math.floor(q * ds.length))]; }
-  // offsets from a cell, nearest first
   const R = Math.ceil(Math.hypot(nx, ny)), buckets = Array.from({ length: R + 1 }, () => []);
   for (let dy = -ny; dy <= ny; dy++) for (let dx = -nx; dx <= nx; dx++) { const r = Math.round(Math.hypot(dx, dy)); if (r <= R) buckets[r].push(dx, dy); }
   const SP = Int16Array.from(buckets.flat());
@@ -1259,17 +1258,16 @@ function layoutPanel(P) {
   };
   const fits = (m, cx, cy) => { for (let i = 0; i < m.length; i += 2) { const x = cx + m[i], y = cy + m[i + 1]; if (x < 0 || y < 0 || x >= nx || y >= ny || occ[y * nx + x]) return false; } return true; };
   for (const p of P.slice().sort((a, b) => b.area - a.area)) {
-    const ph = rand(TAU), den = (Math.abs(Math.cos(ph)) ** PW + Math.abs(Math.sin(ph)) ** PW) ** (1 / PW);
-    const x = clamp(p.dq * Math.cos(ph) / den * Wp / 2, -Wp / 2, Wp / 2), y = clamp(p.dq * Math.sin(ph) / den * Hp / 2 + yc, -Hp / 2, Hp / 2);
-    // long pieces point out from the heart, like rays
-    const th0 = Math.atan2(y - yc, x) - p.ang0, ths = [th0, th0 + Math.PI, th0 + .4, th0 - .4, th0 + Math.PI / 2], masks = ths.map(t => maskOf(p, t));
+    const x = clamp(((p.lx - x0) / pw - .5) * Wp * .94, -Wp / 2, Wp / 2), y = clamp(((p.ly - y0) / ph - .5) * Hp * .94, -Hp / 2, Hp / 2);
+    p.tx = x; p.ty = y;
+    const t = p.thLay, ths = [t, t + .3, t - .3, t + .65, t - .65, t + Math.PI], masks = ths.map(a => maskOf(p, a));
     const tcx = clamp(Math.floor((x + Wp / 2) / c), 0, nx - 1), tcy = clamp(Math.floor((y + Hp / 2) / c), 0, ny - 1);
     let best = null;
     for (let k = 0; k < SP.length && !best; k += 2) { const cx = tcx + SP[k], cy = tcy + SP[k + 1]; if (cx < 0 || cy < 0 || cx >= nx || cy >= ny || occ[cy * nx + cx]) continue;
       for (let r = 0; r < ths.length; r++) if (fits(masks[r], cx, cy)) { best = [cx, cy, r]; break; } }
     if (!best) best = [tcx, tcy, 0];
     const [cx, cy, r] = best, m = masks[r];
-    for (let i = 0; i < m.length; i += 2) { const X = cx + m[i], Y = cy + m[i + 1]; if (X >= 0 && Y >= 0 && X < nx && Y < ny) occ[Y * nx + X] = 1; }
+    for (let i = 0; i < m.length; i += 2) { const X2 = cx + m[i], Y2 = cy + m[i + 1]; if (X2 >= 0 && Y2 >= 0 && X2 < nx && Y2 < ny) occ[Y2 * nx + X2] = 1; }
     p.x = -Wp / 2 + (cx + .5) * c; p.y = -Hp / 2 + (cy + .5) * c; p.th = ths[r];
   }
   return { Wp, Hp };
@@ -1337,26 +1335,26 @@ void main(){
   float side = gl_FrontFacing ? 1.0 : -1.0;
   vec3 Ng = normalize(uN) * side, N = normalize(uAX * nT.x * side + uAY * nT.y + Ng * nT.z);
   vec3 V = normalize(cameraPosition - vW), L = normalize(uLight - vW);
-  float through = 1.0 - smoothstep(-0.06, 0.06, dot(Ng, L));      // the light is behind the glass
-  float align = max(dot(-L, V), 0.0);                                // ...and you are looking toward it
+  // one light: the glass glows when it stands between you and the light, and only as brightly as the light meets it squarely
+  float nl = dot(Ng, L), through = 1.0 - smoothstep(-0.2, 0.2, nl), facing = abs(nl);
+  float align = max(dot(-L, V), 0.0);
   float core = smoothstep(0.1, 1.0, a.g);
   vec3 tint = c.rgb; float dens = c.a;
-  // each piece a rounded gem: lit from its own dome, a bright rim where the light bends at the edge
   float shade = 0.88 + 0.3 * dot(nT.xy, vec2(-0.45, 0.75));
   float rim = (1.0 - core) * (1.0 - smoothstep(0.0, 0.35, a.g));
-  float hot = pow(align, 14.0), sun = pow(align, 90.0);
-  vec3 trans = tint * (0.56 + 0.3 * core) * shade * (0.95 + 0.25 * hot) * uSun;
-  trans = min(mix(trans, uSun, sun * 0.6 + rim * 0.2 * (0.4 + hot)), vec3(0.97));
-  vec3 refl = tint * (0.32 + 0.16 * max(dot(N, L), 0.0)) * shade;
+  float hot = pow(align, 10.0);
+  vec3 trans = tint * (0.36 + 0.22 * core) * shade * (0.45 + 0.75 * facing) * (0.92 + 0.3 * hot) * uSun;
+  trans += uSun * tint * rim * 0.18 * facing;
+  vec3 refl = tint * (0.24 + 0.24 * max(dot(N, L), 0.0)) * shade;
   float tw = through * uGlow;
   vec3 body = mix(refl, trans, tw);
-  float alpha = mix(min(1.0, dens * 1.35 + 0.1), dens * (1.0 - 0.25 * sun), tw);
+  float alpha = mix(min(1.0, dens * 1.1 + 0.06), dens, tw);
   vec3 R = reflect(-V, N);
-  float spec = pow(max(dot(R, L), 0.0), 140.0) * 2.4 * (1.0 - through) + pow(1.0 - abs(dot(N, V)), 4.0) * 0.2;
+  float spec = pow(max(dot(R, L), 0.0), 140.0) * 1.6 * (1.0 - through) + pow(1.0 - abs(dot(N, V)), 4.0) * 0.2;
   float twinkle = pow(max(dot(R, normalize(L + vec3(0.0, 0.25 * sin(uTime * 0.6), 0.0))), 0.0), 700.0) * 2.5;
   // the studio's softboxes, reflected: broad soft panes of light sliding over the glass as it turns
   float box1 = smoothstep(0.62, 0.9, dot(R, normalize(vec3(-0.55, 0.55, 0.62)))), box2 = smoothstep(0.8, 0.95, dot(R, normalize(vec3(0.85, 0.3, 0.2))));
-  float env = (box1 * 0.32 + box2 * 0.22) * (0.35 + 0.65 * pow(1.0 - abs(dot(N, V)), 1.5) + 0.4 * core);
+  float env = (box1 * 0.16 + box2 * 0.1) * (0.35 + 0.65 * pow(1.0 - abs(dot(N, V)), 1.5) + 0.4 * core);
   vec3 col = body * alpha + vec3(spec + twinkle + env) * (0.6 + 0.4 * tw);
   float lead = (1.0 - smoothstep(uLeadW * 0.55, uLeadW * 1.2, a.g)) * uLead;
   vec3 leadC = vec3(0.3, 0.29, 0.28) * (0.7 + 0.6 * max(dot(N, L), 0.0)) + vec3(spec * 0.5);
@@ -1368,7 +1366,7 @@ void main(){
 }`;
 // the light that comes through, cast on the table in the panel's own colours (multiplies what is there)
 const CAST_FS = `
-uniform sampler2D tCol, tAux; uniform mat4 uInv; uniform vec2 uSize; uniform vec3 uLight; uniform float uStr, uMelt, uLeadW;
+uniform sampler2D tCol, tAux; uniform mat4 uInv; uniform vec2 uSize; uniform vec3 uLight, uN; uniform float uStr, uMelt, uLeadW;
 varying vec2 vUv; varying vec3 vW;
 void main(){
   vec3 outc = vec3(1.0);
@@ -1378,16 +1376,25 @@ void main(){
     float t = Pl.z / den;
     if (t > 0.0 && t < 1.0) {
       vec2 uv = mix(Pl.xy, Ll.xy, t) / uSize + 0.5;
-      vec2 e = smoothstep(vec2(0.0), vec2(0.012), uv) * smoothstep(vec2(0.0), vec2(0.012), 1.0 - uv);
+      // the penumbra widens the further the table is from the glass
+      float d = t * length(uLight - vW), soft = clamp(d / max(uSize.y, 0.05), 0.0, 2.0);
+      float ew = 0.015 + 0.05 * soft;
+      vec2 e = smoothstep(vec2(-ew), vec2(ew), uv) * smoothstep(vec2(-ew), vec2(ew), 1.0 - uv);
       float inside = e.x * e.y;
       if (inside > 0.0) {
-        float bias = clamp(log2(1.0 + t * length(uLight - vW) * 30.0), 0.0, 2.4);
-        vec4 c = texture2D(tCol, uv, bias), a = texture2D(tAux, uv, bias * 0.5);
-        float rev = 1.0 - smoothstep(uMelt, uMelt + 0.02, a.r);
-        vec3 g = mix(vec3(1.0), c.rgb * 1.15, c.a * 0.95);
-        float lead = (1.0 - smoothstep(uLeadW * 0.5, uLeadW * 1.8, a.g)) * (1.0 - bias / 4.5);
-        g *= 1.0 - 0.45 * lead;
-        outc = mix(vec3(1.0), pow(clamp(g, 0.0, 1.0), vec3(0.4545)), inside * rev * uStr * 0.85);
+        float bias = 2.2 + 2.6 * soft;
+        vec2 cuv = clamp(uv, 0.0, 1.0);
+        vec4 c = texture2D(tCol, cuv, bias), a = texture2D(tAux, cuv, bias);
+        float rev = 1.0 - smoothstep(uMelt, uMelt + 0.03, a.r);
+        // glass takes light away as well as colouring it: the shadow is tinted and darker than the lit table
+        vec3 tc = mix(vec3(dot(c.rgb, vec3(0.333))), c.rgb, 0.75);
+        vec3 g = mix(vec3(0.7), tc * 0.85, c.a) * mix(0.92, 0.66, c.a);
+        float lead = (1.0 - smoothstep(uLeadW * 0.4, uLeadW * 3.0, a.g)) * (1.0 - soft * 0.4);
+        g *= 1.0 - 0.4 * lead;
+        // light meeting the glass at a slant loses more to reflection
+        float k = abs(dot(normalize(uN), normalize(uLight - vW)));
+        g *= mix(0.72, 1.0, k);
+        outc = mix(vec3(1.0), pow(clamp(g, 0.0, 1.0), vec3(0.4545)), inside * rev * uStr * 0.9);
       }
     }
   }
@@ -1423,12 +1430,21 @@ function enterWindow() {
   const P = [];
   for (const s of shards) { s.asleep = true; s.drag = false; s.mesh.visible = true; const p = flatPiece(s); if (p) P.push(p); else s.mesh.visible = false; }
   if (!P.length) return;
-  const { Wp, Hp } = layoutPanel(P), tex = panelTextures(P, Wp, Hp);
+  // the panel forms where the pile is, in the panel's own axes (x across, y away from you)
+  const yaw = VIEW.az, X = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)), Y = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  let cx = 0, cz = 0, wsum = 0;
+  for (const p of P) { const m = p.s.mesh, q = m.quaternion;
+    // a piece lying face down is turned over, so its glass faces up the way it lay
+    const nw = p.n.clone().applyQuaternion(q); if (nw.y < 0) { p.n.negate(); p.e2.negate(); for (let i = 1; i < p.T.length; i += 2) p.T[i] = -p.T[i]; }
+    const e1w = p.e1.clone().applyQuaternion(q); p.thLay = Math.atan2(e1w.dot(Y), e1w.dot(X));
+    p.wx = m.position.x; p.wz = m.position.z; cx += m.position.x * p.area; cz += m.position.z * p.area; wsum += p.area; }
+  cx /= wsum; cz /= wsum; for (const p of P) { p.wx -= cx; p.wz -= cz; }
+  const { Wp, Hp } = layoutPanel(P, X, Y), tex = panelTextures(P, Wp, Hp);
   const W = WIN; W.P = P; W.Wp = Wp; W.Hp = Hp; W.tex = tex; W.mode = 'gather'; W.t = 0; W.spin = 0; W.spinV = 0; W.fadeT = 0; W.chimeA = 0;
   W.saved = { target: camTarget.clone(), el: VIEW.tEl, dist: VIEW.tDist };
-  W.yaw = VIEW.az; W.C = new THREE.Vector3(camTarget.x, 0, camTarget.z);
+  W.yaw = yaw; W.C = new THREE.Vector3(cx, 0, cz);
   W.floatY = Math.max(.05, Hp * .16) + Hp / 2;
-  W.light = new THREE.Vector3(-Math.sin(W.yaw), 0, -Math.cos(W.yaw)).multiplyScalar(Hp * 1.8).add(W.C).setY(W.floatY + Hp * .95);
+  W.light = new THREE.Vector3(-Math.sin(W.yaw), 0, -Math.cos(W.yaw)).multiplyScalar(Hp * 1.3).add(W.C).setY(W.floatY + Hp * 1.9);
   // the panel itself
   const grp = new THREE.Group(); grp.rotation.order = 'YXZ'; grp.position.set(W.C.x, .0022, W.C.z); grp.rotation.set(-Math.PI / 2, W.yaw, 0);
   const U = { tCol: { value: tex.col }, tAux: { value: tex.aux }, uTex: { value: new THREE.Vector2(1 / tex.TW, 1 / tex.TH) }, uLight: { value: W.light }, uSun: { value: new THREE.Color(1, .94, .82) },
@@ -1443,17 +1459,17 @@ function enterWindow() {
     const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, fw * 1.3), fm); b.position.set(x, y, 0); b.renderOrder = 3; grp.add(b); }
   panel.visible = aura.visible = false; grp.children.forEach(c => { if (c.geometry.type === 'BoxGeometry') c.visible = false; });
   scene.add(grp); grp.updateMatrixWorld(true);
-  const S = Math.max(2.4, Hp * 10), cast = new THREE.Mesh(new THREE.PlaneGeometry(S, S), MULT(new THREE.ShaderMaterial({ uniforms: { tCol: U.tCol, tAux: U.tAux, uInv: { value: new THREE.Matrix4() }, uSize: { value: new THREE.Vector2(Wp, Hp) }, uLight: U.uLight, uStr: { value: 0 }, uMelt: U.uMelt, uLeadW: U.uLeadW }, vertexShader: PANEL_VS, fragmentShader: CAST_FS })));
+  const S = Math.max(2.4, Hp * 10), cast = new THREE.Mesh(new THREE.PlaneGeometry(S, S), MULT(new THREE.ShaderMaterial({ uniforms: { tCol: U.tCol, tAux: U.tAux, uInv: { value: new THREE.Matrix4() }, uSize: { value: new THREE.Vector2(Wp, Hp) }, uLight: U.uLight, uN: U.uN, uStr: { value: 0 }, uMelt: U.uMelt, uLeadW: U.uLeadW }, vertexShader: PANEL_VS, fragmentShader: CAST_FS })));
   cast.rotation.x = -Math.PI / 2; cast.position.set(W.C.x, .0009, W.C.z); cast.renderOrder = -.5; scene.add(cast);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0, toneMapped: false }));
-  halo.scale.setScalar(Hp * 2.9); halo.renderOrder = -3; scene.add(halo);
+  halo.scale.setScalar(Hp * 2.2); halo.position.copy(W.light); halo.renderOrder = -3; scene.add(halo);
   Object.assign(W, { grp, panel, aura, frameMat: fm, U, cast, halo });
   // each piece flies to its place, the heart of the rose first
   const tp = new THREE.Vector3(), tq = new THREE.Quaternion();
   for (const p of P) { const m = p.s.mesh; piecePose(p, grp, .0012, tp, tq);
     const from = m.position.clone(), d = from.distanceTo(tp), midP = from.clone().lerp(tp, .5); midP.y = Math.max(from.y, tp.y) + .06 + d * .35 + rand(0, .05);
     p.g = { from, mid: midP, to: tp.clone(), q0: m.quaternion.clone(), q1: tq.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 6) * (Math.random() < .5 ? -1 : 1),
-      delay: .1 + p.dq * 1.1 + rand(0, .35), dur: rand(.85, 1.2) + Math.min(.6, d * .5), done: false }; }
+      delay: .1 + rand(0, .7), dur: rand(.85, 1.2) + Math.min(.6, d * .5), done: false }; }
   // look down on the table while the pieces gather
   camGoal.copy(W.C); camFollow = true; VIEW.tEl = 1.05; VIEW.tDist = fitDist(Wp, Hp) * 1.05;
   play('glass_smash_rev', { gain: .22, rate: .7, verb: .9 });
@@ -1491,8 +1507,7 @@ function stepWindow(rdt, now) {
     const bob = Math.sin(now * .0011) * W.Hp * .012 * e;
     grp.position.y = lerp(.0022, W.floatY, easeOut(clamp(u * 1.15, 0, 1))) + bob;
     grp.rotation.set(lerp(-Math.PI / 2, 0, smooth01(u * 1.1 - .05)), W.yaw + W.spin, Math.sin(now * .0007) * .012 * e);
-    W.halo.position.set(-Math.sin(W.yaw), 0, -Math.cos(W.yaw)).multiplyScalar(W.Hp * .7).add(W.C).setY(grp.position.y + W.Hp * .22);
-    const glow = smooth01((u - .25) / .75); U.uGlow.value = glow; W.cast.material.uniforms.uStr.value = glow; W.aura.material.uniforms.uStr.value = glow * .45; W.halo.material.opacity = glow * .8;
+    const glow = smooth01((u - .25) / .75); U.uGlow.value = glow; W.cast.material.uniforms.uStr.value = glow; W.aura.material.uniforms.uStr.value = glow * .25; W.halo.material.opacity = glow * .7;
     // when the panel turns to face straight into the light, a small chime
     const face = Math.cos(W.spin); if (W.mode === 'show' && face > .985 && W.chimeA <= .985 && Math.abs(W.spinV) > .2) play('glass_land', { gain: .05, rate: 2, verb: 1 }); W.chimeA = face;
     // motes drift out of the light, each the colour of the glass it came through
