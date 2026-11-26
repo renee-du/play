@@ -1394,7 +1394,7 @@ void main(){
       vec2 e = smoothstep(vec2(-ew), vec2(ew), uv) * smoothstep(vec2(-ew), vec2(ew), 1.0 - uv);
       float inside = e.x * e.y;
       if (inside > 0.0) {
-        float bias = 2.2 + 2.6 * soft;
+        float bias = 1.2 + 1.8 * soft;
         vec2 cuv = clamp(uv, 0.0, 1.0);
         vec4 c = texture2D(tCol, cuv, bias), a = texture2D(tAux, cuv, bias);
         float rev = 1.0 - smoothstep(uMelt, uMelt + 0.03, a.r);
@@ -1487,7 +1487,9 @@ function enterWindow() {
   W.saved = { target: camTarget.clone(), el: VIEW.tEl, dist: VIEW.tDist };
   W.yaw = yaw; W.C = new THREE.Vector3(cx, 0, cz);
   W.floatY = Math.max(.05, Hp * .16) + Hp / 2;
-  W.light = new THREE.Vector3(-Math.sin(W.yaw), 0, -Math.cos(W.yaw)).multiplyScalar(Hp * 1.3).add(W.C).setY(W.floatY + Hp * 1.9);
+  // the sun is far away, so its rays arrive parallel: 38 degrees up, from behind the window
+  const sunEl = 38 * Math.PI / 180; W.sunDir = new THREE.Vector3(-Math.sin(W.yaw) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(W.yaw) * Math.cos(sunEl));
+  W.light = W.sunDir.clone().multiplyScalar(80).add(new THREE.Vector3(W.C.x, W.floatY, W.C.z));
   // the panel itself
   const grp = new THREE.Group(); grp.rotation.order = 'YXZ'; grp.position.set(W.C.x, .0022, W.C.z); grp.rotation.set(-Math.PI / 2, W.yaw, 0);
   const U = { tCol: { value: tex.col }, tAux: { value: tex.aux }, uTex: { value: new THREE.Vector2(1 / tex.TW, 1 / tex.TH) }, uLight: { value: W.light }, uSun: { value: new THREE.Color(1, .94, .82) },
@@ -1523,7 +1525,7 @@ function enterWindow() {
   for (const p of P) { const m = p.s.mesh; p.sx = p.tx * 1.22; p.sy = p.ty * 1.22; p.sth = p.thLay; piecePose(p, grp, .0012, tp, tq, p.sx, p.sy, p.sth);
     const from = m.position.clone(), d = from.distanceTo(tp), midP = from.clone().lerp(tp, .5); midP.y = Math.max(from.y, tp.y) + .06 + d * .35 + rand(0, .05);
     p.g = { from, mid: midP, to: tp.clone(), q0: m.quaternion.clone(), q1: tq.clone(), axis: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), spin: rand(2, 6) * (Math.random() < .5 ? -1 : 1),
-      delay: .1 + rand(0, .7), dur: rand(.85, 1.2) + Math.min(.6, d * .5), done: false }; }
+      delay: rand(0, .3), dur: rand(.6, .8) + Math.min(.35, d * .3), done: false }; }
   // look down on the table while the pieces gather
   camGoal.copy(W.C); camFollow = true; VIEW.tEl = 1.05; VIEW.tDist = fitDist(Wp, Hp) * 1.05;
   play('glass_smash_rev', { gain: .22, rate: .7, verb: .9 });
@@ -1536,7 +1538,7 @@ function stepWindow(rdt, now) {
   // while the window is up the room falls into soft shade, so the sun through the glass can be brighter than it
   const dimT = W.mode === 'rise' || W.mode === 'show' ? W.U.uGlow.value : 0; W.dim = lerp(W.dim || 0, dimT, 1 - Math.exp(-rdt * 2.5));
   scene.background.lerpColors(WHITE, DUSK, W.dim);
-  if (camFollow) { camTarget.lerp(camGoal, 1 - Math.exp(-rdt * 3)); if (!W.mode && camTarget.distanceTo(camGoal) < 1e-4) camFollow = false; }
+  if (camFollow) { camTarget.lerp(camGoal, 1 - Math.exp(-rdt * 4.5)); if (!W.mode && camTarget.distanceTo(camGoal) < 1e-4) camFollow = false; }
   if (!W.mode) return;
   W.t += rdt; const U = W.U, grp = W.grp;
   if (W.mode === 'gather') {
@@ -1548,31 +1550,33 @@ function stepWindow(rdt, now) {
       m.morphTargetInfluences[0] = smooth01(u * 1.3);
       if (u >= 1) { g.done = true; m.position.copy(g.to); m.quaternion.copy(g.q1); m.morphTargetInfluences[0] = 1; if (Math.random() < .18) play('glass_land', { gain: .06, rate: rand(1.3, 1.7), pan: panX(g.to.x), verb: .6 }); }
     }
-    if (all && W.t > .3) { W.mode = 'scoot'; W.t = 0; for (const p of W.P) { p.sd = rand(0, .5); let d = p.th - p.sth; d = Math.atan2(Math.sin(d), Math.cos(d)); p.dth = d; } }
+    if (all) { W.mode = 'scoot'; W.t = 0; for (const p of W.P) { p.sd = rand(0, .2); let d = p.th - p.sth; d = Math.atan2(Math.sin(d), Math.cos(d)); p.dth = d; } }
   } else if (W.mode === 'scoot') {
     // as if something gathered them in: every piece slides across the table to fit against its neighbours
     const tp = new THREE.Vector3(), tq = new THREE.Quaternion(); let all = true;
-    for (const p of W.P) { const u = clamp((W.t - p.sd) / 1.3, 0, 1); if (u < 1) all = false; const e = easeIO(u), m = p.s.mesh;
+    for (const p of W.P) { const u = clamp((W.t - p.sd) / .75, 0, 1); if (u < 1) all = false; const e = easeIO(u), m = p.s.mesh;
       piecePose(p, grp, .0012 + .002 * Math.sin(u * Math.PI), tp, tq, lerp(p.sx, p.x, e), lerp(p.sy, p.y, e), p.sth + p.dth * e); m.position.copy(tp); m.quaternion.copy(tq);
       if (u > 0 && !p.tick) { p.tick = true; if (Math.random() < .12) play('glass_land', { gain: .04, rate: rand(1.6, 2.1), pan: panX(tp.x), verb: .7 }); }
       if (u > .2 && u < .9 && Math.random() < .015) addP({ k: 2, x: tp.x, y: tp.y + .002, z: tp.z, vx: 0, vy: 0, vz: 0, s: rand(.008, .018), life: 0, max: rand(.3, .6), c: [1, 1, 1] }); }
-    if (all && W.t > 2) { W.mode = 'meld'; W.t = 0; W.panel.visible = true; for (const p of W.P) p.s.mesh.visible = false;
+    if (all) { W.mode = 'meld'; W.t = 0; W.panel.visible = true; for (const p of W.P) p.s.mesh.visible = false;
       play('glass_smash_rev', { gain: .3, rate: .52, verb: 1 }); }
   } else if (W.mode === 'meld') {
-    const u = clamp(W.t / 2.4, 0, 1);
+    const u = clamp(W.t / 1.3, 0, 1);
     U.uMelt.value = easeIO(u) * 1.01; U.uHeat.value = smooth01(W.t / .35) * (1 - smooth01((u - .85) / .15)); U.uLead.value = smooth01((u - .45) / .5);
     W.edgeMat.userData.fade.value = U.uLead.value; W.edges.visible = U.uLead.value > 0;
-    if (u >= 1) { W.mode = 'rise'; W.t = 0; U.uHeat.value = 0; W.beams.visible = true;
+    if (u >= .8) { W.mode = 'rise'; W.t = 0; W.beams.visible = true;
       camGoal.set(W.C.x, W.floatY - W.Hp * .2, W.C.z); VIEW.tEl = .34; VIEW.tDist = fitDist(W.Wp, W.Hp) * 1.3;
       [0, 1, 2, 3, 4].forEach(i => play('glass_land', { gain: .07, rate: [1.5, 1.68, 1.89, 2, 2.25][i], verb: 1, delay: .5 + i * .16 })); }
   } else {
-    const u = W.mode === 'rise' ? clamp(W.t / 2.8, 0, 1) : 1, e = easeIO(u);
+    // the fusing finishes as it lifts
+    if (U.uMelt.value < 1.01) { U.uMelt.value = Math.min(1.01, U.uMelt.value + rdt * .9); U.uLead.value = Math.min(1, U.uLead.value + rdt * 2); U.uHeat.value = Math.max(0, U.uHeat.value - rdt * 3); W.edgeMat.userData.fade.value = U.uLead.value; W.edges.visible = true; }
+    const u = W.mode === 'rise' ? clamp(W.t / 1.8, 0, 1) : 1, e = easeIO(u);
     if (W.mode === 'rise' && u >= 1) { W.mode = 'show'; W.t = 0; if (!SPIN) cv.style.cursor = 'grab'; }
     if (!SPIN) { W.spin += W.spinV * rdt; W.spinV *= Math.exp(-rdt * 1.8); }
     const bob = Math.sin(now * .0011) * W.Hp * .012 * e;
     grp.position.y = lerp(.0022, W.floatY, easeOut(clamp(u * 1.15, 0, 1))) + bob;
     grp.rotation.set(lerp(-Math.PI / 2, 0, smooth01(u * 1.1 - .05)), W.yaw + W.spin, Math.sin(now * .0007) * .012 * e);
-    const glow = smooth01((u - .25) / .75); U.uGlow.value = glow; W.cast.material.uniforms.uStr.value = glow; W.aura.material.uniforms.uStr.value = glow * .22; W.halo.material.opacity = glow;
+    const glow = smooth01((u - .25) / .75); U.uGlow.value = glow; W.cast.material.uniforms.uStr.value = glow; W.aura.material.uniforms.uStr.value = glow * .22; W.halo.visible = false;
     // when the panel turns to face straight into the light, a small chime
     const face = Math.cos(W.spin); if (W.mode === 'show' && face > .985 && W.chimeA <= .985 && Math.abs(W.spinV) > .2) play('glass_land', { gain: .05, rate: 2, verb: 1 }); W.chimeA = face;
     // motes drift out of the light, each the colour of the glass it came through
