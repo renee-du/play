@@ -1304,7 +1304,7 @@ function stackY(o, base) {
 }
 function stackBase(o, prefer) {
   if (!o.family) return null;
-  const c = objs.filter(q => q !== o && alive(q) && (q.landed || (q.air && q.air.gentle && !q.air.drop)) && q.family === o.family && !alive(q.above) && (q.depth || 0) < 4 && o.def.R <= q.def.R * 1.12 + .004);
+  const c = objs.filter(q => q !== o && alive(q) && (q.landed || (q.air && q.air.gentle && !q.air.drop)) && q.family === o.family && !alive(q.above) && (q.depth || 0) < (o.family === 'plate' ? 9 : 4) && o.def.R <= q.def.R * 1.12 + .004);
   if (!c.length) return null;
   if (prefer) { const p = o.group.position; c.sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z)); return c[0]; }
   return pick(c);
@@ -1330,14 +1330,23 @@ function collapse(o) {
 }
 function spotFor(o, prefer) {
   const base = stackBase(o, prefer); if (base && (prefer || Math.random() < .3)) return landOn(o, base);
-  const A = tableArea(), R = o.def.R + (o.def.extraR || 0) * .5;
+  let best = null;
+  for (const grow of [1, 1.18, 1.34]) {
+    best = freeSpot(o, grow);
+    if (best.clear > .004) return best;
+  }
+  const b2 = stackBase(o, false); if (b2) return landOn(o, b2);
+  return best;
+}
+function freeSpot(o, grow) {
+  const A0 = tableArea(), A = { x: A0.x * grow, z: A0.z * Math.min(grow, 1.15) }, R = o.def.R + (o.def.extraR || 0) * .5;
   let best = null, bs = -1e9;
-  for (let k = 0; k < 70; k++) {
+  for (let k = 0; k < 90; k++) {
     const x = rand(-A.x + R, A.x - R), z = rand(-A.z + R, A.z - R);
     let clear = .2;
     for (const q of objs) { if (q === o || q.broken || q.dissolve) continue; const t = q.air ? q.air.land : q.landed ? q.group.position : null; if (!t) continue; clear = Math.min(clear, Math.hypot(x - t.x, z - t.z) - (q.def.R + R)); }
     let pile = 0; for (const [dx, dz] of [[0, 0], [R * .6, 0], [-R * .6, 0], [0, R * .6], [0, -R * .6]]) pile = Math.max(pile, hfAt(x + dx, z + dz));
-    const sc = Math.min(clear, .06) - pile * 6 - Math.hypot(x / A.x, z / A.z) * .012 + rand(0, .006);
+    const sc = Math.min(clear, .06) - pile * 6 - Math.hypot(x / A0.x, z / A0.z) * .012 + rand(0, .006);
     if (sc > bs) { bs = sc; best = new THREE.Vector3(x, 0, z); best.clear = clear; }
   }
   return best;
@@ -1347,9 +1356,8 @@ function makeRoom() {
   while (standing.length >= landedCap()) dissolve(standing.shift());
 }
 function launch() {
-  makeRoom();
   const o = makeObject(nextKind());
-  const land = spotFor(o, false); if (land.clear < 0) { const s0 = objs.filter(q => q.landed && !q.broken && !q.dissolve).sort((a, b) => a.landedAt - b.landedAt)[0]; if (s0) dissolve(s0); }
+  const land = spotFor(o, false);
   // start just below the bottom of the frame, in front of where it will land
   const toward = new THREE.Vector3(camera.position.x - camTarget.x, 0, camera.position.z - camTarget.z).normalize();
   // thrown from the side it is not landing on, so the arc reads across the frame: up, over and down
