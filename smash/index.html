@@ -831,7 +831,7 @@ function radiusAt(o, y) {
 
 /* ------------------------------------------------------------- camera */
 const camTarget = new THREE.Vector3();
-const TABLE = { wide: { x: .42, z: .24 }, tall: { x: .24, z: .4 } };
+const TABLE = { wide: { x: .42, z: .24 }, tall: { x: .215, z: .38 } };
 const tableArea = () => TABLE[innerWidth / innerHeight < .9 ? 'tall' : 'wide'];
 const VIEW = { az: 0, el: .63, dist: 2, fit: 2, tAz: 0, tEl: .63, tDist: 2, baseEl: .63 };
 function placeCamera(az, el, dist) {
@@ -842,13 +842,14 @@ function fitCamera(resetView = true) {
   const tall = innerWidth / innerHeight < .9;
   camera.fov = tall ? 34 : 26; camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   const el = (tall ? 50 : 36) * Math.PI / 180;
-  const A = tableArea(), box = new THREE.Box3(new THREE.Vector3(-A.x, 0, -A.z), new THREE.Vector3(A.x, .42, A.z));
+  // a short landscape phone frames the table more tightly so things are not tiny
+const A = tableArea(), box = new THREE.Box3(new THREE.Vector3(-A.x, 0, -A.z), new THREE.Vector3(A.x, innerHeight < 500 ? .3 : .42, A.z));
   box.getCenter(camTarget); camTarget.y = 0.03;
   const corners = []; for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
   let lo = .3, hi = 12;
   for (let it = 0; it < 40; it++) {
     const d = (lo + hi) / 2; placeCamera(0, el, d);
-    let ok = true; for (const c of corners) { const p = c.clone().project(camera); if (Math.abs(p.x) > .92 || p.y > .86 || p.y < -.9 || p.z > 1) { ok = false; break; } }
+    let ok = true; for (const c of corners) { const p = c.clone().project(camera); if (Math.abs(p.x) > (tall ? .86 : .92) || p.y > .86 || p.y < -.9 || p.z > 1) { ok = false; break; } }
     if (ok) hi = d; else lo = d;
   }
   VIEW.fit = hi; VIEW.baseEl = el;
