@@ -921,7 +921,7 @@ function body(gain, f0 = 120, f1 = 44, dur = .2) {
 // a miss: a soft, muffled tap, like the hammer set down on a cloth
 function softTap(pan) {
   if (!SFX.ctx || !SFX.on) return;
-  const A = SFX.ctx, t = A.currentTime + .002, out = A.createGain(); out.gain.value = 1.5;
+  const A = SFX.ctx, t = A.currentTime + .002, out = A.createGain(); out.gain.value = 2.1;
   let node = out; if (A.createStereoPanner) { const p = A.createStereoPanner(); p.pan.value = clamp(pan, -1, 1) * .5; out.connect(p); node = p; } node.connect(SFX.out);
   const n = A.createBufferSource(); n.buffer = SFX.noise; const lp = A.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650; lp.Q.value = .4;
   const ng = A.createGain(); ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(.12, t + .006); ng.gain.exponentialRampToValueAtTime(.0001, t + .09);
