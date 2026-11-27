@@ -1018,30 +1018,39 @@ const aim = new THREE.Mesh(new THREE.RingGeometry(.0042, .0058, 40), new THREE.M
 aim.renderOrder = 20; aim.visible = false; scene.add(aim);
 const HAM = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), vis: 0, touch: false, hideT: 0, t: 9, pending: null, k0: 1 };
 const LIFT = .07, TILT = .55;
+const GRIP = { x: Math.cos(.42) * .24, y: .035 + Math.sin(.42) * .24 }; // where the hand holds the handle, in the hammer's frame
 const CH = { on: false, t0: 0, k: 1, touch: false, xy: null };
 const chargeLevel = () => CH.on ? clamp((performance.now() - CH.t0 - 120) / 850, 0, 1) : 0;
 function hammerUpdate(rdt) {
   HAM.t += rdt;
-  const tHit = .065;
+  const tHit = .065 + .045 * Math.max(0, (HAM.k0 || 1) - 1);
   let k; // 1 = raised, 0 = face on the target
   if (HAM.t < tHit) { const u = HAM.t / tHit; k = HAM.k0 * (1 - u * u * u); }
   else { const u = HAM.t - tHit; k = 1 - Math.exp(-u * 7) * Math.cos(u * 9) * (1 - Math.min(1, u * 1.2) * 0); k = clamp(k, -.05, 1.15); }
   // held: the hammer draws back further the longer you hold, trembling a little when fully wound
-  if (CH.on) { const c = chargeLevel(); CH.k += ((1 + 1.35 * c) - CH.k) * Math.min(1, rdt * 10); k = Math.max(k, CH.k); }
+  if (CH.on) { const c = chargeLevel(), e = c * c * (3 - 2 * c); CH.k += ((1 + 2.4 * e) - CH.k) * Math.min(1, rdt * 9); k = Math.max(k, CH.k); }
   else CH.k = Math.max(1, k);
   HAM.k = k;
   if (HAM.pending && HAM.t >= tHit) { const p = HAM.pending; HAM.pending = null; strike(p); }
-  hammer.position.copy(HAM.point).addScaledVector(UP, LIFT * Math.max(0, k));
-  if (CH.on && chargeLevel() >= 1) hammer.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(.0008));
+  // past 1 the hammer is wound back: it rises less than it turns, and draws back along its handle toward you
+  const over = Math.max(0, k - 1), liftK = Math.min(k, 1) + over * .35;
+  hammer.position.copy(HAM.point).addScaledVector(UP, LIFT * Math.max(0, liftK));
+  if (CH.on && chargeLevel() >= 1) hammer.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(.0016));
   const cr = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), cf = new THREE.Vector3().subVectors(camera.position, HAM.point); cf.y = 0; cf.normalize();
   const d = cr.multiplyScalar(.75).add(cf.multiplyScalar(.65)).normalize();
   hammer.rotation.set(0, Math.atan2(-d.z, d.x), 0);
-  hPivot.rotation.z = -TILT * k;
+  hammer.position.addScaledVector(d, over * .014);
+  // the resting tilt turns about the face; winding back turns about the hand, so the head arcs up and over the grip
+  const base = -TILT * Math.min(k, 1), phi = base - over * .68;
+  const gx = GRIP.x, gy = GRIP.y, cb = Math.cos(base), sb = Math.sin(base), cp = Math.cos(phi), sp = Math.sin(phi);
+  hPivot.position.set((cb * gx - sb * gy) - (cp * gx - sp * gy), (sb * gx + cb * gy) - (sp * gx + cp * gy), 0);
+  hPivot.rotation.z = phi;
   if (HAM.touch) { HAM.hideT -= rdt; HAM.vis = clamp(HAM.hideT / .35, 0, 1); }
   hammer.visible = HAM.vis > .01;
   hammer.traverse(m => { if (m.material && m !== aim) m.material.opacity = HAM.vis; });
   aim.visible = !HAM.touch && HAM.vis > .9;
-  if (aim.visible) { aim.position.copy(HAM.point).addScaledVector(HAM.normal, .0006); aim.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), HAM.normal); }
+  if (aim.visible) { aim.position.copy(HAM.point).addScaledVector(HAM.normal, .0006); aim.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), HAM.normal);
+    const full = CH.on && chargeLevel() >= 1; aim.scale.setScalar(full ? 1.25 + .2 * Math.sin(performance.now() * .02) : 1 + chargeLevel() * .2); }
 }
 
 /* ---------------------------------------------------------------- physics */
