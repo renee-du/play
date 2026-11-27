@@ -1314,8 +1314,8 @@ function strike(hit) {
 /* -------------------------------------------------------------- cracks */
 // each blow short of the last runs hairline cracks across the surface from where it landed
 const _qj = new THREE.Quaternion();
-// glass gives out in two or three blows, plates in four to six, heavier ceramics in five to seven
-const strength = o => o.glass ? 2 + (Math.random() * 2 | 0) : o.def.flat ? 4 + (Math.random() * 3 | 0) : 5 + (Math.random() * 3 | 0);
+// glass and the thin blue-and-white porcelain (the plates and the vase) give out in two or three blows; the stoneware takes five to seven
+const strength = o => (o.glass || o.def.flat || o.kind === 'vase') ? 2 + (Math.random() * 2 | 0) : 5 + (Math.random() * 3 | 0);
 function refineTris(part, tris, target) {
   // subdivide every triangle together, so no seam is left between finer and coarser ones
   let longest = 0;
