@@ -1018,15 +1018,21 @@ const aim = new THREE.Mesh(new THREE.RingGeometry(.0042, .0058, 40), new THREE.M
 aim.renderOrder = 20; aim.visible = false; scene.add(aim);
 const HAM = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), vis: 0, touch: false, hideT: 0, t: 9, pending: null, k0: 1 };
 const LIFT = .07, TILT = .55;
+const CH = { on: false, t0: 0, k: 1, touch: false, xy: null };
+const chargeLevel = () => CH.on ? clamp((performance.now() - CH.t0 - 120) / 850, 0, 1) : 0;
 function hammerUpdate(rdt) {
   HAM.t += rdt;
   const tHit = .065;
   let k; // 1 = raised, 0 = face on the target
   if (HAM.t < tHit) { const u = HAM.t / tHit; k = HAM.k0 * (1 - u * u * u); }
   else { const u = HAM.t - tHit; k = 1 - Math.exp(-u * 7) * Math.cos(u * 9) * (1 - Math.min(1, u * 1.2) * 0); k = clamp(k, -.05, 1.15); }
+  // held: the hammer draws back further the longer you hold, trembling a little when fully wound
+  if (CH.on) { const c = chargeLevel(); CH.k += ((1 + 1.35 * c) - CH.k) * Math.min(1, rdt * 10); k = Math.max(k, CH.k); }
+  else CH.k = Math.max(1, k);
   HAM.k = k;
   if (HAM.pending && HAM.t >= tHit) { const p = HAM.pending; HAM.pending = null; strike(p); }
   hammer.position.copy(HAM.point).addScaledVector(UP, LIFT * Math.max(0, k));
+  if (CH.on && chargeLevel() >= 1) hammer.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(.0008));
   const cr = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), cf = new THREE.Vector3().subVectors(camera.position, HAM.point); cf.y = 0; cf.normalize();
   const d = cr.multiplyScalar(.75).add(cf.multiplyScalar(.65)).normalize();
   hammer.rotation.set(0, Math.atan2(-d.z, d.x), 0);
@@ -1206,8 +1212,8 @@ function smash(o, hitWorld) {
       makeShard(o, pi, tris, P0, quat, vel.addScaledVector(objVel, .8), wv);
     }
   }
-  burst(hitWorld, o.def, o.def.flat ? 1 : 1.1, glassy);
-  juice(.07, .28, .55, .006);
+  const pw = STRIKE.power; burst(hitWorld, o.def, (o.def.flat ? 1 : 1.1) * (1 + pw * .5), glassy);
+  juice(.07 + pw * .04, .28 - pw * .08, .55 + pw * .2, .006 + pw * .004);
   const pan = panX(hitWorld.x);
   if (glassy) { play('glass_smash', { gain: 1.15, rate: rand(.9, 1.0) * Math.min(1, o.def.pitch), pan, verb: .7 }); }
   else { play('ceramic_smash', { gain: 1.1, rate: rand(.88, .98) * Math.min(1, o.def.pitch), pan, verb: .55 }); play('crunch', { gain: .18, rate: rand(.9, 1), pan, verb: .25 }); }
@@ -1287,15 +1293,17 @@ function pickAt(cx, cy) {
   const t = -ray.ray.origin.y / ray.ray.direction.y; if (t > 0) { const p = ray.ray.origin.clone().addScaledVector(ray.ray.direction, t); p.y = hfAt(p.x, p.z); return { point: p, normal: UP.clone() }; }
   return null;
 }
+const STRIKE = { power: 0 };
 function strike(hit) {
   if (!hit) return;
-  if (hit.obj && !hit.obj.broken && !hit.obj.dissolve) { let w = hit.point; if (hit.local) { hit.obj.group.updateMatrixWorld(true); w = hit.obj.group.localToWorld(hit.local.clone()); } if (hit.obj.hp > 1) crackHit(hit.obj, w); else smash(hit.obj, w); return; }
+  STRIKE.power = hit.power || 0;
+  if (hit.obj && !hit.obj.broken && !hit.obj.dissolve) { let w = hit.point; if (hit.local) { hit.obj.group.updateMatrixWorld(true); w = hit.obj.group.localToWorld(hit.local.clone()); } STRIKE.power = hit.power || 0; const dmg = hit.dmg || 1; if (hit.obj.hp > dmg) crackHit(hit.obj, w, dmg); else smash(hit.obj, w); return; }
   const p = hit.point;
-  const near = shards.filter(s => s.mesh.position.distanceTo(p) < s.rad * .9 + .014).sort((a, b) => a.mesh.position.distanceTo(p) - b.mesh.position.distanceTo(p)).slice(0, 8);
+  const near = shards.filter(s => s.mesh.position.distanceTo(p) < s.rad * .9 + .014 * (1 + STRIKE.power)).sort((a, b) => a.mesh.position.distanceTo(p) - b.mesh.position.distanceTo(p)).slice(0, 8);
   if (hit.shard && shards.includes(hit.shard) && !near.includes(hit.shard)) near.unshift(hit.shard);
   if (near.length) {
     const mats = new Set(); const def = near[0].obj.def;
-    for (const s of near) { mats.add(s.obj.glass); breakShard(s, p, 1); }
+    for (const s of near) { mats.add(s.obj.glass); breakShard(s, p, 1 + STRIKE.power * .8); }
     for (const s of statics.slice()) { const d = s.mesh.position.distanceTo(p); if (d < .07 && Math.random() < .7) { wake(s); s.v.set((s.mesh.position.x - p.x) * 6, rand(.3, .9) * (1 - d / .07), (s.mesh.position.z - p.z) * 6); s.w.set(rand(-6, 6), rand(-6, 6), rand(-6, 6)); s.bounces = 1; } }
     const glassy = mats.has(true) && !mats.has(false);
     
@@ -1315,7 +1323,7 @@ function strike(hit) {
 // each blow short of the last runs hairline cracks across the surface from where it landed
 const _qj = new THREE.Quaternion();
 // glass and the thin blue-and-white porcelain (the plates and the vase) give out in two or three blows; the stoneware takes five to seven
-const strength = o => (o.glass || o.def.flat || o.kind === 'vase') ? 2 + (Math.random() * 2 | 0) : 5 + (Math.random() * 3 | 0);
+const strength = o => o.glass ? 1 + (Math.random() * 2 | 0) : (o.def.flat || o.kind === 'vase') ? 2 + (Math.random() * 2 | 0) : 5 + (Math.random() * 3 | 0);
 function refineTris(part, tris, target) {
   // subdivide every triangle together, so no seam is left between finer and coarser ones
   let longest = 0;
@@ -1419,13 +1427,14 @@ function clearCracks(o) {
   o.crackMeshes = []; o.crackKeys = new Set(); o.impacts = []; o.jolt = null;
   o.hp = strength(o);
 }
-function crackHit(o, hitWorld) {
+function crackHit(o, hitWorld, dmg = 1) {
   FT.hit = performance.now();
   o.group.updateMatrixWorld(true);
   const L = o.group.worldToLocal(hitWorld.clone());
-  o.hp--; o.impacts.push(L.clone());
+  o.hp -= dmg; o.impacts.push(L.clone());
   const sev = o.impacts.length, glassy = o.glass;
   crackApart(o, L);
+  for (let i = 1; i < Math.min(dmg, 3); i++) { const L2 = L.clone().add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(.012)); o.impacts.push(L2); crackApart(o, L2); }
   if (glassy) for (const h of o.held) if (Math.random() < .35) { const w = o.group.localToWorld(h.com.clone()); addP({ k: 2, x: w.x, y: w.y, z: w.z, vx: 0, vy: 0, vz: 0, s: rand(.008, .016), life: -rand(0, .2), max: rand(.35, .7), c: [1, 1, 1] }); }
   // the knock
   const away = new THREE.Vector3().subVectors(o.group.position, hitWorld); away.y = Math.max(away.y, 0); away.normalize();
@@ -1436,7 +1445,7 @@ function crackHit(o, hitWorld) {
   for (let i = 0; i < 3 + sev; i++) { const a = rand(TAU), sp = rand(.2, .7); crumbs.add(hitWorld.x, hitWorld.y, hitWorld.z, Math.cos(a) * sp, rand(.3, 1.1), Math.sin(a) * sp, rand(.0006, .0014), glassy ? pick([pal[0], pal[2], pal[3]]) : pick(pal.concat([o.def.edgeCol]))); }
   for (let i = 0; i < 14 + sev * 4; i++) { const a = rand(TAU), sp = rand(.1, .45); addP({ k: 0, x: hitWorld.x, y: hitWorld.y, z: hitWorld.z, vx: Math.cos(a) * sp, vy: rand(.02, .35), vz: Math.sin(a) * sp, sw: rand(-3, 3), s: rand(.0018, .0042), life: 0, max: rand(.5, 1.1), c: colorV(pick(pal)), ph: rand(TAU) }); }
   if (glassy) for (let i = 0; i < 3; i++) addP({ k: 2, x: hitWorld.x + rand(-.015, .015), y: hitWorld.y + rand(-.01, .02), z: hitWorld.z + rand(-.015, .015), vx: 0, vy: 0, vz: 0, s: rand(.008, .016), life: -rand(0, .15), max: rand(.3, .6), c: [1, 1, 1] });
-  juice(.03 + sev * .006, .7, .18, .0015 + sev * .0006);
+  const pw = STRIKE.power; juice(.03 + sev * .006 + pw * .04, .7 - pw * .25, .18 + pw * .2, .0015 + sev * .0006 + pw * .003);
   const pan = panX(hitWorld.x), g = .32 + sev * .07;
   if (glassy) { play('glass_land', { gain: g + .15, rate: rand(1.12, 1.25) * o.def.pitch, pan, verb: .45 }); play('glass_smash', { gain: g * .35, rate: rand(1.35, 1.5), pan, verb: .3 }); }
   else { play('crunch', { gain: g, rate: rand(1.15, 1.3), pan, verb: .25 }); play('ceramic_land', { gain: g * .8, rate: rand(1.05, 1.18) * o.def.pitch, pan, verb: .35 }); }
@@ -1781,6 +1790,7 @@ function frame(now) {
   if (shake > 1e-5) camera.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(shake));
   // while the view is turning the table slides under a still pointer: rest the hammer, aim again once it settles
   const turning = now - (VIEW.lastOrbit || -1e9) < 220 || Math.abs(VIEW.tAz - VIEW.az) + Math.abs(VIEW.tEl - VIEW.el) + Math.abs(VIEW.tDist - VIEW.dist) / VIEW.fit > .004;
+  if (CH.on && CH.touch && CH.xy && HAM.t > .12) { const h = pickAt(CH.xy[0], CH.xy[1]); if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); } }
   if (!HAM.touch) {
     if (hoverXY && !turning) { if (HAM.t > .12) {
         HOV.n++;
@@ -1802,13 +1812,15 @@ let hoverXY = null;
 const HOV = { n: 0, xy: null, obj: null, local: null };
 const cv = renderer.domElement, touches = new Map();
 let tapTimer = null, tapAt = null, gesture = null, rdrag = null;
-function swingAt(x, y, touch) {
+function swingAt(x, y, touch, power = 0) {
   audioInit(); if (reform) return;
   const hit = pickAt(x, y); if (!hit) return;
+  hit.power = power; hit.dmg = 1 + Math.round(power * 3);
+  if (power > .25) whoosh();
   if (HAM.pending) strike(HAM.pending);
   HAM.touch = touch; HAM.point.copy(hit.point); HAM.normal.copy(hit.normal);
   if (hit.obj) { hit.obj.group.updateMatrixWorld(true); hit.local = hit.obj.group.worldToLocal(hit.point.clone()); }
-  HAM.vis = 1; HAM.hideT = 1.1; HAM.k0 = Math.max(0, Math.min(1, HAM.k ?? 1)); HAM.t = 0; HAM.pending = hit;
+  HAM.vis = 1; HAM.hideT = 1.1; HAM.k0 = Math.max(0, Math.min(2.4, HAM.k ?? 1)); HAM.t = 0; HAM.pending = hit;
 }
 function gestureState() { const p = [...touches.values()]; return { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2, d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) }; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
@@ -1816,15 +1828,15 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault(); audioInit();
   if (e.pointerType === 'mouse') {
     if (e.button === 2) { rdrag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); return; }
-    if (e.button === 0) swingAt(e.clientX, e.clientY, false);
+    if (e.button === 0) { CH.on = true; CH.t0 = performance.now(); CH.touch = false; cv.setPointerCapture(e.pointerId); }
     return;
   }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (touches.size === 1) {
     // wait a breath to see whether a second finger follows
     tapAt = { x: e.clientX, y: e.clientY };
-    clearTimeout(tapTimer); tapTimer = setTimeout(() => { if (touches.size <= 1 && tapAt && !gesture) swingAt(tapAt.x, tapAt.y, true); tapAt = null; }, 70);
-  } else if (touches.size === 2) { clearTimeout(tapTimer); tapAt = null; gesture = gestureState(); }
+    clearTimeout(tapTimer); tapTimer = setTimeout(() => { if (touches.size <= 1 && tapAt && !gesture) { CH.on = true; CH.t0 = performance.now() - 70; CH.touch = true; CH.xy = [tapAt.x, tapAt.y]; CH.id = e.pointerId; HAM.touch = true; HAM.vis = 1; HAM.hideT = 9; } tapAt = null; }, 70);
+  } else if (touches.size === 2) { clearTimeout(tapTimer); tapAt = null; gesture = gestureState(); if (CH.on && CH.touch) { CH.on = false; HAM.hideT = .3; } }
 });
 addEventListener('pointermove', e => {
   if (e.pointerType === 'mouse') {
@@ -1833,10 +1845,16 @@ addEventListener('pointermove', e => {
   }
   if (!touches.has(e.pointerId)) return;
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (CH.on && CH.touch && e.pointerId === CH.id) CH.xy = [e.clientX, e.clientY];
   if (tapAt && Math.hypot(e.clientX - tapAt.x, e.clientY - tapAt.y) > 12) { clearTimeout(tapTimer); tapAt = null; }
   if (touches.size === 2 && gesture) { const g = gestureState(); orbit(-(g.x - gesture.x) * .007, (g.y - gesture.y) * .006, gesture.d / Math.max(20, g.d)); gesture = g; }
 }, { passive: false });
-const endTouch = e => { if (e.pointerType === 'mouse') { if (rdrag) rdrag = null; return; } touches.delete(e.pointerId); if (touches.size < 2) gesture = null; };
+const endTouch = e => {
+  if (CH.on && (e.pointerType === 'mouse' ? !CH.touch : (CH.touch && e.pointerId === CH.id))) {
+    const power = chargeLevel(), xy = e.pointerType === 'mouse' ? [e.clientX, e.clientY] : CH.xy; CH.on = false;
+    if (e.type === 'pointerup' && xy) swingAt(xy[0], xy[1], e.pointerType !== 'mouse', power); else HAM.hideT = .3;
+  }
+  if (e.pointerType === 'mouse') { if (rdrag) rdrag = null; return; } touches.delete(e.pointerId); if (touches.size < 2) gesture = null; };
 addEventListener('pointerup', endTouch); addEventListener('pointercancel', endTouch);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
@@ -1860,6 +1878,8 @@ window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, 
   reform: () => startReform(), reforming: () => !!reform,
   air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase, o.hp, o.held ? o.held.length : 0]; },
   combo: () => TOSS.combo, speed: k => { TEST.speed = k; },
+  landedScreen: kind => { const o = objs.find(q => q.kind === kind && q.landed && !q.broken); if (!o) return null; const v = new THREE.Vector3(o.x, (o.baseY || 0) + o.H * .55, o.z).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
+  hpOf: kind => { const o = objs.find(q => q.kind === kind && !q.broken); return o ? o.hp : 'broken'; },
   stackTest: (kind, n, x = 0, z = 0) => { TOSS.paused = true; let below = null; const kinds = Array.isArray(kind) ? kind : Array(n).fill(kind);
     for (let i = 0; i < kinds.length; i++) { const o = makeObject(kinds[i]); const land = below ? landOn(o, below) : new THREE.Vector3(x, 0, z); o.air = { land, yaw: rand(TAU), gentle: true, drop: true }; root.add(o.group); objs.push(o); landObject(o); below = o; } },
   overlaps: () => { const L = objs.filter(o => o.landed && alive(o)); const chain = (a, b) => { for (let q = a; q; q = q.below) if (q === b) return true; for (let q = b; q; q = q.below) if (q === a) return true; return false; };
