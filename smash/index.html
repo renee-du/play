@@ -47,9 +47,9 @@ const easeOut = t => 1 - Math.pow(1 - t, 3);
 function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 
 /* -------------------------------------------------------------- renderer */
-// on dense screens the pixels are small enough that edge smoothing costs more than it shows
+// hardware edge smoothing everywhere: phones render below their native density, so edges would otherwise step
 const MOBILE = matchMedia('(pointer: coarse)').matches;
-const renderer = new THREE.WebGLRenderer({ antialias: (window.devicePixelRatio || 1) < 2, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 const DPR = Math.min(window.devicePixelRatio || 1, 2);
 // full screen on a large display is a lot of pixels: cap the frame at about 2.4 million, which still looks sharp
 const PR_FLOOR = DPR >= 2 ? 1.5 : 1;
