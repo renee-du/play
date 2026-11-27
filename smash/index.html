@@ -1514,7 +1514,20 @@ function spotFor(o, prefer) {
   best = freeSpot(o, 1);
   if (best.clear > .004) return best;
   const b2 = stackBase(o, false) || carrierBase(o); if (b2) return landOn(o, b2);
-  if (o.air === undefined && !prefer) return null; // a new throw waits for room instead
+  // the table stays its size: the oldest thing that leaves enough room breathes away, and this lands where it stood
+  const R0 = o.def.R + (o.def.extraR || 0) * .5;
+  const footprints = objs.filter(q => q !== o && q.landed && alive(q) && !alive(q.below)).sort((a, b) => a.landedAt - b.landedAt);
+  const clearAt = (x, z, skip) => { let c = .2; for (const q of objs) { if (q === o || q.broken || q.dissolve || skip.has(q)) continue; const t = q.air ? q.air.land : q.landed ? q.group.position : null; if (!t) continue; c = Math.min(c, Math.hypot(x - t.x, z - t.z) - (q.def.R + R0)); } return c; };
+  const chainOf = q => { const c = []; for (let p = q; alive(p); p = p.above) c.push(p); return c; };
+  let pickQ = null, pickC = -1e9;
+  for (const q of footprints) { const ch = new Set(chainOf(q)), c = clearAt(q.x, q.z, ch); if (c > .004) { pickQ = q; pickC = c; break; } if (c > pickC) { pickC = c; pickQ = q; } }
+  if (pickQ) {
+    const gone = chainOf(pickQ);
+    // anything else still in the way goes too
+    for (const q of objs) { if (q === o || !q.landed || !alive(q) || gone.includes(q)) continue; if (Math.hypot(q.x - pickQ.x, q.z - pickQ.z) < q.def.R + R0 + .004) for (const p of chainOf(q.below && alive(q.below) ? q.below : q)) if (!gone.includes(p)) gone.push(p); }
+    for (let i = gone.length - 1; i >= 0; i--) dissolve(gone[i]);
+    const v = new THREE.Vector3(pickQ.x, 0, pickQ.z); v.clear = 1; return v;
+  }
   return best;
 }
 function freeSpot(o, grow) {
@@ -1535,17 +1548,9 @@ function makeRoom() {
   while (standing.length >= landedCap()) dissolve(standing.shift());
 }
 function launch() {
-  // the next thing that has somewhere to land: a plate onto the stack, a glass onto an empty plate...
-  if (!TOSS.bag.length) nextKind() && TOSS.bag.push(TOSS.bag.pop());
-  const order = [...TOSS.bag].reverse().concat(Object.keys(KINDS).sort(() => Math.random() - .5));
-  let o = null, land = null;
-  for (const kind of order) {
-    const def = KINDS[kind](), probe = { kind, def, family: def.flat ? 'plate' : kind.startsWith('bowl') ? 'bowl' : null, group: new THREE.Group(), H: def.H };
-    const spot = spotFor(probe, false);
-    if (spot) { if (spot.on) spot.on.above = null; const i = TOSS.bag.lastIndexOf(kind); if (i >= 0) TOSS.bag.splice(i, 1); o = makeObject(kind, def); land = spotFor(o, false) || spot; break; }
-  }
-  if (!o) { TOSS.waiting = true; return false; }
-  TOSS.waiting = false;
+  makeRoom();
+  const o = makeObject(nextKind());
+  const land = spotFor(o, false);
   // start just below the bottom of the frame, in front of where it will land
   const toward = new THREE.Vector3(camera.position.x - camTarget.x, 0, camera.position.z - camTarget.z).normalize();
   // thrown from the side it is not landing on, so the arc reads across the frame: up, over and down
