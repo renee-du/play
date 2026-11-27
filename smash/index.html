@@ -796,7 +796,7 @@ function makeObject(kind, def = KINDS[kind]()) {
     const b = buildGeo(o, pi, part.full, false);
     const m = new THREE.Mesh(b.geo, def.mats); m.castShadow = !def.glass; m.receiveShadow = !def.glass; m.userData.obj = o; group.add(m); meshes.push(m);
   });
-  o.meshes = meshes;
+  o.meshes = meshes; o.intact = meshes; o.held = null; o.glow = 0;
   o.contactA = def.glass ? .22 : def.flat ? .55 : .75;
   const cs = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, depthWrite: false, toneMapped: false, opacity: 0 }));
   const fr = footRadius(def) * (def.flat ? 2.1 : 2.6);
@@ -808,8 +808,8 @@ function makeObject(kind, def = KINDS[kind]()) {
     cm.rotation.x = -Math.PI / 2; cm.position.x = len / 2 - def.R * .9; cm.renderOrder = -1; holder.add(cm); holder.visible = false; group.add(holder); o.caustic = holder; o.causticM = cm;
   }
   // a soft shadow straight below while it is in the air, so you can read its height
-  o.hp = o.glass ? 4 + (Math.random() * 2 | 0) : def.flat ? 4 + (Math.random() * 3 | 0) : 5 + (Math.random() * 3 | 0);
-  o.impacts = []; o.cracks = []; o.tips = [];
+  o.hp = strength(o);
+  o.impacts = [];
   o.drop = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: contactTex, transparent: true, depthWrite: false, toneMapped: false, opacity: 0 }));
   o.drop.rotation.x = -Math.PI / 2; o.drop.renderOrder = -1; o.drop.visible = false; root.add(o.drop);
   return o;
@@ -1183,9 +1183,18 @@ function smash(o, hitWorld) {
   const seeds = seedsAround(cands, I, ns, d0, sp0);
   for (const ip of o.impacts) seeds.push([ip.x + rand(-.002, .002), ip.y + rand(-.002, .002), ip.z + rand(-.002, .002)]);
   const quat = o.group.quaternion.clone(), P0 = o.group.position.clone();
-  o.parts.forEach((part, pi) => {
-    const pieces = fracture(part, part.full, seeds, I, glassy);
-    for (const tris of pieces) {
+  const jobs = [];
+  if (o.held) {
+    for (const h of o.held) {
+      const part = o.parts[h.pi];
+      if (h.com.distanceTo(Il) < .035 && h.area > 9e-5) {
+        const size = Math.sqrt(h.area), hc = []; for (let i = 0; i < h.tris.length; i += 2) hc.push(mid(part, h.tris[i], h.tris[i + 1]).p);
+        let best = hc[0], bd = 1e9; for (const c of hc) { const d = Math.hypot(c[0] - I[0], c[1] - I[1], c[2] - I[2]); if (d < bd) { bd = d; best = c; } }
+        for (const t of fracture(part, refineTris(part, h.tris, size / 5), seedsAround(hc, best, 3, size * .6, .22), best, glassy)) jobs.push([h.pi, t]);
+      } else jobs.push([h.pi, h.tris]);
+    }
+  } else o.parts.forEach((part, pi) => { for (const t of fracture(part, part.full, seeds, I, glassy)) jobs.push([pi, t]); });
+  for (const [pi, tris] of jobs) { const part = o.parts[pi]; {
       const a = triArea(part, tris);
       const c = centroidOf(part, tris), cw = new THREE.Vector3(...c).applyQuaternion(quat).add(P0);
       if (a < 1.2e-5) { crumbs.add(cw.x, cw.y, cw.z, rand(-.5, .5), rand(.2, 1.2), rand(-.5, .5), clamp(Math.sqrt(a) * .5, .0008, .002), pick(o.def.pal)); continue; }
@@ -1196,7 +1205,7 @@ function smash(o, hitWorld) {
       const wv = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(rand(3, 14) * (o.def.flat ? .55 : 1));
       makeShard(o, pi, tris, P0, quat, vel.addScaledVector(objVel, .8), wv);
     }
-  });
+  }
   burst(hitWorld, o.def, o.def.flat ? 1 : 1.1, glassy);
   juice(.07, .28, .55, .006);
   const pan = panX(hitWorld.x);
@@ -1305,76 +1314,72 @@ function strike(hit) {
 /* -------------------------------------------------------------- cracks */
 // each blow short of the last runs hairline cracks across the surface from where it landed
 const _qj = new THREE.Quaternion();
-const crackMats = {};
-function crackMat(key, color, opacity) {
-  return crackMats[key] || (crackMats[key] = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, toneMapped: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
-}
-function nearestOnSurface(o, L) {
-  let best = null, bd = 1e9;
-  o.parts.forEach((part, pi) => {
-    if (part.type !== 'lathe') return;
-    for (let i = 0; i < part.full.length; i += 6) { const u = part.full[i], v = part.full[i + 1], p = mid(part, u, v).p, d = (p[0] - L.x) ** 2 + (p[1] - L.y) ** 2 + (p[2] - L.z) ** 2; if (d < bd) { bd = d; best = { pi, u, v }; } }
-  });
-  return best;
-}
-function walkCrack(o, pi, u, v, ang, len, out, depth = 0) {
-  const part = o.parts[pi], step = .0022, pts = [];
-  for (let s = 0; s <= len; s += step) {
-    const m = mid(part, u, v); pts.push(m);
-    const e = 1e-3, pu = mid(part, u + e, v).p, pv = mid(part, u, Math.min(1, v + e)).p;
-    const su = Math.max(1e-4, Math.hypot(pu[0] - m.p[0], pu[1] - m.p[1], pu[2] - m.p[2]) / e), sv = Math.max(1e-4, Math.hypot(pv[0] - m.p[0], pv[1] - m.p[1], pv[2] - m.p[2]) / e);
-    u += Math.cos(ang) * step / su; v += Math.sin(ang) * step / sv;
-    if (v < .001 || v > .999) break;
-    ang += rand(-.42, .42);
-    if (depth < 2 && Math.random() < .06 && s > .006) walkCrack(o, pi, u, v, ang + (Math.random() < .5 ? -1 : 1) * rand(.5, 1.1), (len - s) * rand(.35, .7), out, depth + 1);
+// glass gives out in two or three blows, plates in four to six, heavier ceramics in five to seven
+const strength = o => o.glass ? 2 + (Math.random() * 2 | 0) : o.def.flat ? 4 + (Math.random() * 3 | 0) : 5 + (Math.random() * 3 | 0);
+function refineTris(part, tris, target) {
+  for (let pass = 0; pass < 2; pass++) {
+    const out = []; let split = false;
+    for (let i = 0; i < tris.length; i += 6) {
+      const A = mid(part, tris[i], tris[i + 1]).p, B = mid(part, tris[i + 2], tris[i + 3]).p;
+      if (Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) > target) { split = true;
+        const R7 = x => Math.round(x * 1e7) / 1e7, q = [[tris[i], tris[i + 1]], [tris[i + 2], tris[i + 3]], [tris[i + 4], tris[i + 5]]];
+        const m01 = [R7((q[0][0] + q[1][0]) / 2), R7((q[0][1] + q[1][1]) / 2)], m12 = [R7((q[1][0] + q[2][0]) / 2), R7((q[1][1] + q[2][1]) / 2)], m20 = [R7((q[2][0] + q[0][0]) / 2), R7((q[2][1] + q[0][1]) / 2)];
+        out.push(...q[0], ...m01, ...m20, ...m01, ...q[1], ...m12, ...m20, ...m12, ...q[2], ...m01, ...m12, ...m20);
+      } else for (let k = 0; k < 6; k++) out.push(tris[i + k]);
+    }
+    tris = out; if (!split) break;
   }
-  if (pts.length > 1) { out.push({ pts, w: depth ? .00075 : .0012 }); o.tips.push({ pi, u, v, ang }); }
+  return tris;
 }
-function crackMesh(o, branches, glassy) {
-  const P = [];
-  const push = (a, b, c) => P.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-  const A = new THREE.Vector3(), B = new THREE.Vector3(), T = new THREE.Vector3(), S = new THREE.Vector3(), N = new THREE.Vector3(), N2 = new THREE.Vector3();
-  for (const br of branches) {
-    const n = br.pts.length;
-    for (let i = 0; i < n - 1; i++) {
-      const m0 = br.pts[i], m1 = br.pts[i + 1], taper = 1 - i / n * .75;
-      for (const sgn of [1, -1]) { // on the outside and the inside wall
-        N.set(...m0.n); N2.set(...m1.n);
-        A.set(...m0.p).addScaledVector(N, sgn * (m0.t / 2 + .00035)); B.set(...m1.p).addScaledVector(N2, sgn * (m1.t / 2 + .00035));
-        T.subVectors(B, A); S.crossVectors(T, N).normalize().multiplyScalar(br.w * taper / 2);
-        const a0 = A.clone().add(S), a1 = A.clone().sub(S), b0 = B.clone().add(S), b1 = B.clone().sub(S);
-        push(a0, a1, b0); push(a1, b1, b0);
-      }
+// a cracked thing is really in pieces already, held together in its own shape by nothing but habit
+function holdPiece(o, pi, tris, L) {
+  const b = buildGeo(o, pi, tris, true); if (!b) return;
+  const mesh = new THREE.Mesh(b.geo, o.def.mats); mesh.castShadow = !o.glass; mesh.receiveShadow = !o.glass; mesh.userData.obj = o;
+  const com = new THREE.Vector3(...b.com); mesh.position.copy(com); o.group.add(mesh);
+  const dir = com.clone().sub(L); if (dir.lengthSq() < 1e-8) dir.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)); dir.normalize();
+  o.held.push({ pi, tris, mesh, com, area: b.area, dir, off: new THREE.Vector3(), vel: new THREE.Vector3(), ax: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), rot: 0, rv: 0, jit: rand(.6, 1.4) });
+}
+function crackApart(o, L) {
+  const I = [L.x, L.y, L.z], glassy = o.glass;
+  if (!o.held) {
+    // the first blow: a few pieces around where it landed, the rest still one
+    o.held = []; o.intact.forEach(m => m.visible = false);
+    const cands = []; o.parts.forEach(part => { for (let i = 0; i < part.full.length; i += 6) cands.push(mid(part, part.full[i], part.full[i + 1]).p); });
+    const seeds = seedsAround(cands, I, glassy ? 7 : 5, glassy ? .028 : .035, .5);
+    o.parts.forEach((part, pi) => { for (const t of fracture(part, part.full, seeds, I, glassy)) { if (triArea(part, t) < 1.2e-5) continue; holdPiece(o, pi, t, L); } });
+  } else {
+    // later blows: the pieces nearest it split again
+    const near = o.held.map(h => ({ h, d: h.com.distanceTo(L) })).sort((a, b) => a.d - b.d).slice(0, 2).filter((e, i) => i === 0 || e.d < .03);
+    for (const { h } of near) {
+      if (h.area < 9e-5) continue;
+      const part = o.parts[h.pi], size = Math.sqrt(h.area);
+      const cands = []; for (let i = 0; i < h.tris.length; i += 2) cands.push(mid(part, h.tris[i], h.tris[i + 1]).p);
+      let best = cands[0], bd = 1e9; for (const c of cands) { const d = Math.hypot(c[0] - I[0], c[1] - I[1], c[2] - I[2]); if (d < bd) { bd = d; best = c; } }
+      const pieces = fracture(part, refineTris(part, h.tris, size / 5), seedsAround(cands, best, clamp(Math.round(size / .012) + 2, 3, 5), size * .6, .22), best, glassy);
+      if (pieces.length < 2) continue;
+      o.group.remove(h.mesh); h.mesh.geometry.dispose(); o.held.splice(o.held.indexOf(h), 1);
+      for (const t of pieces) { if (triArea(part, t) < 1.2e-5) continue; holdPiece(o, h.pi, t, L); }
     }
   }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setDrawRange(0, 0);
-  const mesh = new THREE.Mesh(g, glassy ? crackMat('glass', 0xffffff, .95) : crackMat('cer', 0x2e2621, .78));
-  mesh.renderOrder = 3; mesh.frustumCulled = false; o.group.add(mesh);
-  const c = { mesh, count: P.length / 3, grow: 0, dur: .14 }; o.cracks.push(c);
-  if (glassy) { // a faint coloured edge along the white
-    const m2 = new THREE.Mesh(g, crackMat('g' + o.def.pal[1], new THREE.Color(o.def.pal[1]), .35)); m2.scale.setScalar(1.0008); m2.renderOrder = 2; m2.frustumCulled = false; o.group.add(m2); o.cracks.push({ mesh: m2, count: c.count, grow: 0, dur: .14 });
-  }
+  o.meshes = o.held.map(h => h.mesh);
+  // everything starts, the nearest most, then settles a little looser than before
+  for (const h of o.held) { const near = 1 / (1 + h.com.distanceTo(L) / .025); h.vel.addScaledVector(h.dir, (.05 + .1 * near) * h.jit); h.rv += rand(-1, 1) * (1.5 + 3 * near); }
+  o.glow = 1;
 }
 function clearCracks(o) {
-  for (const c of o.cracks) { o.group.remove(c.mesh); }
-  for (const c of o.cracks) c.mesh.geometry.dispose();
-  o.cracks = []; o.tips = []; o.impacts = []; o.jolt = null;
-  o.hp = o.glass ? 4 + (Math.random() * 2 | 0) : o.def.flat ? 4 + (Math.random() * 3 | 0) : 5 + (Math.random() * 3 | 0);
+  if (o.held) { for (const h of o.held) { o.group.remove(h.mesh); h.mesh.geometry.dispose(); } }
+  o.held = null; o.intact.forEach(m => m.visible = true); o.meshes = o.intact;
+  o.impacts = []; o.jolt = null; o.glow = 0; if (!o.glass) o.def.mats[2].emissiveIntensity = 0;
+  o.hp = strength(o);
 }
 function crackHit(o, hitWorld) {
   FT.hit = performance.now();
   o.group.updateMatrixWorld(true);
   const L = o.group.worldToLocal(hitWorld.clone());
   o.hp--; o.impacts.push(L.clone());
-  const sev = o.impacts.length, glassy = o.glass, branches = [];
-  const start = nearestOnSurface(o, L);
-  if (start) {
-    const nb = 3 + (Math.random() * 2 | 0), base = rand(TAU);
-    for (let k = 0; k < nb; k++) walkCrack(o, start.pi, start.u, start.v, base + k * TAU / nb + rand(-.4, .4), rand(.012, .02) + sev * .005, branches);
-    // older cracks run on a little further
-    const old = o.tips.slice(0, -nb); for (let k = 0; k < Math.min(2, old.length); k++) { const t = old[(Math.random() * old.length) | 0]; walkCrack(o, t.pi, t.u, t.v, t.ang, rand(.008, .016), branches, 1); }
-    if (branches.length) crackMesh(o, branches, glassy);
-  }
+  const sev = o.impacts.length, glassy = o.glass;
+  crackApart(o, L);
+  if (glassy) for (const h of o.held) if (Math.random() < .35) { const w = o.group.localToWorld(h.com.clone()); addP({ k: 2, x: w.x, y: w.y, z: w.z, vx: 0, vy: 0, vz: 0, s: rand(.008, .016), life: -rand(0, .2), max: rand(.35, .7), c: [1, 1, 1] }); }
   // the knock
   const away = new THREE.Vector3().subVectors(o.group.position, hitWorld); away.y = Math.max(away.y, 0); away.normalize();
   if (o.air) { o.jolt = o.jolt || { p: new THREE.Vector3(), v: new THREE.Vector3(), r: 0, rv: 0, ax: new THREE.Vector3(1, 0, 0) }; o.jolt.v.addScaledVector(away, .32).add(new THREE.Vector3(0, .12, 0)); o.jolt.ax.crossVectors(UP, away).normalize(); if (o.jolt.ax.lengthSq() < .5) o.jolt.ax.set(1, 0, 0); o.jolt.rv += 3.2; }
@@ -1561,7 +1566,7 @@ function landObject(o) {
   o.contact.visible = true; o.contactFade = 0; if (o.caustic) o.caustic.visible = true;
   o.wobV.set(rand(-1, 1) * .8, rand(-1, 1) * .8);
   g.updateMatrixWorld(true);
-  if (o.def.flat) { o.wtris = worldTris(o.meshes[0].geometry, o.meshes[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
+  if (o.def.flat) { o.wtris = worldTris(o.intact[0].geometry, o.intact[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
   play(o.glass ? 'glass_land' : 'ceramic_land', { gain: a.drop ? .14 : a.gentle ? .18 : .26, rate: o.def.pitch * rand(.96, 1.02), pan: panX(o.x), verb: .5 });
   for (let i = 0; i < (a.drop ? 0 : 12); i++) { const ang = rand(TAU), r = o.def.R * rand(.9, 1.2); addP({ k: 0, x: o.x + Math.cos(ang) * r, y: o.baseY + .004, z: o.z + Math.sin(ang) * r, vx: Math.cos(ang) * .04, vy: rand(.02, .06), vz: Math.sin(ang) * .04, sw: rand(-2, 2), s: rand(.002, .004), life: 0, max: rand(.6, 1.1), c: colorV(pick(o.def.pal)), ph: rand(TAU) }); }
   if (!a.gentle) { TOSS.combo = 0; TOSS.timer = Math.min(TOSS.timer, rand(.3, .5)); }
@@ -1575,7 +1580,15 @@ function stepObjects(dt, rdt) {
   for (let i = objs.length - 1; i >= 0; i--) {
     const o = objs[i];
     if (o.jolt) { const j = o.jolt; j.v.addScaledVector(j.p, -140 * dt).multiplyScalar(Math.exp(-9 * dt)); j.p.addScaledVector(j.v, dt); j.rv += (-j.r * 120 - j.rv * 8) * dt; j.r += j.rv * dt; if (j.p.lengthSq() < 1e-9 && j.v.lengthSq() < 1e-8 && Math.abs(j.r) < 1e-4) o.jolt = null; }
-    for (const c of o.cracks) if (c.grow < 1) { c.grow = Math.min(1, c.grow + rdt / c.dur); c.mesh.geometry.setDrawRange(0, Math.floor(c.count * easeOut(c.grow) / 6) * 6); }
+    if (o.held) {
+      const lv = o.impacts.length, gap = .0009 + .0012 * lv, tilt = .008 * lv;
+      for (const h of o.held) {
+        h.vel.addScaledVector(h.off, -260 * rdt).addScaledVector(h.dir, 260 * gap * h.jit * rdt).multiplyScalar(Math.exp(-13 * rdt)); h.off.addScaledVector(h.vel, rdt);
+        h.rv += ((tilt * h.jit) - h.rot) * 200 * rdt; h.rv *= Math.exp(-12 * rdt); h.rot += h.rv * rdt;
+        h.mesh.position.copy(h.com).add(h.off); h.mesh.quaternion.setFromAxisAngle(h.ax, h.rot);
+      }
+    }
+    if (o.glow > 0 && !o.glass) { o.glow = Math.max(0, o.glow - rdt * 2.2); const m = o.def.mats[2]; m.emissive.setRGB(1, .72, .4); m.emissiveIntensity = 1.6 * o.glow * o.glow; }
     if (o.air && !o.broken) { o.air.t += dt; o.air.T = (o.air.T || 0) + dt; placeAir(o, dt); }
     if (o.contactFade !== undefined && o.contactFade < 1) { o.contactFade = Math.min(1, o.contactFade + rdt / .35); o.contact.material.opacity = o.contactA * o.contactFade; if (o.causticM) o.causticM.material.opacity = o.contactFade; }
     if (o.dissolve) {
@@ -1796,7 +1809,7 @@ document.getElementById('pause').addEventListener('click', e => {
 window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, o.broken]), shards: shards.length, statics: statics.length, flying: shards.filter(s => !s.asleep).length }),
   shardScreen: () => { const s = pick(shards); if (!s) return null; const v = s.mesh.position.clone().project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; },
   reform: () => startReform(), reforming: () => !!reform,
-  air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase]; },
+  air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase, o.hp, o.held ? o.held.length : 0]; },
   combo: () => TOSS.combo, speed: k => { TEST.speed = k; },
   overlaps: () => { const L = objs.filter(o => o.landed && alive(o)); const chain = (a, b) => { for (let q = a; q; q = q.below) if (q === b) return true; for (let q = b; q; q = q.below) if (q === a) return true; return false; };
     const bad = []; for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const a = L[i], b = L[j]; if (chain(a, b)) continue; const d = Math.hypot(a.x - b.x, a.z - b.z); if (d < (a.def.R + b.def.R) * .92) bad.push([a.kind, b.kind, +d.toFixed(3)]); } return { landed: L.length, stacked: L.filter(o => o.below).length, bad }; }, queue: k => { TOSS.bag.push(...k); } };
