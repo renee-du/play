@@ -853,7 +853,8 @@ const A = tableArea(), box = new THREE.Box3(new THREE.Vector3(-A.x, 0, -A.z), ne
     if (ok) hi = d; else lo = d;
   }
   VIEW.fit = hi; VIEW.baseEl = el;
-  if (resetView) { VIEW.az = VIEW.tAz = 0; VIEW.el = VIEW.tEl = el; VIEW.dist = VIEW.tDist = hi; }
+  // phones start a little closer in
+  if (resetView) { VIEW.az = VIEW.tAz = 0; VIEW.el = VIEW.tEl = el; VIEW.dist = VIEW.tDist = hi * (tall || MOBILE ? .86 : 1); }
   placeCamera(VIEW.az, VIEW.el, VIEW.dist);
 }
 function keepInView() {
@@ -1818,11 +1819,8 @@ function frame(now) {
     if (hoverXY && !turning) { if (HAM.t > .12) {
         HOV.n++;
         const moved = !HOV.xy || HOV.xy[0] !== hoverXY[0] || HOV.xy[1] !== hoverXY[1];
-        const riding = HOV.obj && HOV.obj.air && !HOV.obj.broken;
-        if (moved || (!riding && HOV.n % 3 === 0)) { const h = pickAt(hoverXY[0], hoverXY[1]); HOV.xy = hoverXY.slice();
-          if (h) { HAM.target.copy(h.point); HAM.normal.copy(h.normal); HOV.obj = h.obj && h.obj.air ? h.obj : null; if (HOV.obj) { HOV.obj.group.updateMatrixWorld(true); HOV.local = HOV.obj.group.worldToLocal(h.point.clone()); } } }
-        else if (riding) { HOV.obj.group.updateMatrixWorld(true); HAM.target.copy(HOV.obj.group.localToWorld(HOV.local.clone())); }
-        else if (HOV.obj) HOV.obj = null;
+        // the aim is always what is under your pointer; the hammer glides there rather than snapping
+        if (moved || HOV.n % 2 === 0) { const h = pickAt(hoverXY[0], hoverXY[1]); HOV.xy = hoverXY.slice(); if (h) { HAM.target.copy(h.point); HAM.normal.copy(h.normal); } }
       } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
     else HAM.vis = Math.max(0, HAM.vis - rdt * 10);
   }
