@@ -1271,7 +1271,7 @@ function layoutPanel(P, X, Y) {
   return { Wp, Hp };
 }
 function panelTextures(P, Wp, Hp) {
-  const TH = 1280, TW = Math.max(64, Math.round(TH * Wp / Hp)), px = Hp / TH, N = TW * TH, lab = new Int32Array(N);
+  const TH = 1536, TW = Math.max(64, Math.round(TH * Wp / Hp)), px = Hp / TH, N = TW * TH, lab = new Int32Array(N);
   P.forEach((p, idx) => {
     const cs = Math.cos(p.th), sn = Math.sin(p.th), T = p.T, X = u => u, L = idx + 1;
     for (let i = 0; i < T.length; i += 6) {
@@ -1282,6 +1282,23 @@ function panelTextures(P, Wp, Hp) {
         if (l1 >= 0 && l2 >= 0 && l1 + l2 <= 1) lab[y * TW + x] = L; }
     }
   });
+  // clean the seams: where pieces overlap, a piece keeps only its main body; slivers and specks peeking out from
+  // under a neighbour are dropped (the melt fills them), so no stray dots or broken bits of lead are left behind
+  { const comp = new Int32Array(N), best = new Map(), stack = new Int32Array(N); let nc = 0; const sizes = [0], owner = [0];
+    for (let s0 = 0; s0 < N; s0++) { if (!lab[s0] || comp[s0]) continue; const l = lab[s0]; nc++; let sp = 0, n = 0; stack[sp++] = s0; comp[s0] = nc;
+      while (sp) { const i = stack[--sp], x = i % TW; n++;
+        if (x > 0 && !comp[i - 1] && lab[i - 1] === l) { comp[i - 1] = nc; stack[sp++] = i - 1; }
+        if (x < TW - 1 && !comp[i + 1] && lab[i + 1] === l) { comp[i + 1] = nc; stack[sp++] = i + 1; }
+        if (i >= TW && !comp[i - TW] && lab[i - TW] === l) { comp[i - TW] = nc; stack[sp++] = i - TW; }
+        if (i < N - TW && !comp[i + TW] && lab[i + TW] === l) { comp[i + TW] = nc; stack[sp++] = i + TW; } }
+      sizes.push(n); owner.push(l); if (!best.has(l) || sizes[best.get(l)] < n) best.set(l, nc); }
+    const minPx = 40;
+    for (let i = 0; i < N; i++) if (lab[i]) { const c = comp[i]; if (best.get(lab[i]) !== c || sizes[c] < minPx) lab[i] = 0; } }
+  // smooth the outlines: a pixel surrounded mostly by another piece joins it, which irons out stair-steps and notches
+  for (let pass = 0; pass < 2; pass++) { const src = lab.slice();
+    for (let y = 1; y < TH - 1; y++) for (let x = 1; x < TW - 1; x++) { const i = y * TW + x, l = src[i]; if (!l) continue; let bl = 0, bn = 0;
+      for (const o of [-TW - 1, -TW, -TW + 1, -1, 1, TW - 1, TW, TW + 1]) { const m = src[i + o]; if (!m || m === l) continue; let k = 0; for (const o2 of [-TW - 1, -TW, -TW + 1, -1, 1, TW - 1, TW, TW + 1]) if (src[i + o2] === m) k++; if (k > bn) { bn = k; bl = m; } }
+      if (bn >= 5) lab[i] = bl; } }
   // melting: every gap takes the glass of the nearest piece (two-pass chamfer distance)
   const dist = new Float32Array(N); for (let i = 0; i < N; i++) dist[i] = lab[i] ? 0 : 1e9;
   const chamfer = (D, Lb) => {
@@ -1302,7 +1319,7 @@ function panelTextures(P, Wp, Hp) {
   for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) { const i = y * TW + x, l = lab[i];
     bd[i] = (x === 0 || y === 0 || x === TW - 1 || y === TH - 1 || lab[i - 1] !== l || lab[i + 1] !== l || lab[i - TW] !== l || lab[i + TW] !== l) ? 0 : 1e9; }
   chamfer(bd, null);
-  const cap = clamp(.006 / px, 6, 20), leadPx = Math.max(.75, .00048 / px);
+  const cap = clamp(.006 / px, 6, 20), leadPx = Math.max(1.05, .00055 / px);
   const colA = new Uint8Array(N * 4), auxA = new Uint8Array(N * 4), pc = P.map(p => { const o = {}; p.col.getRGB(o, THREE.SRGBColorSpace); return o; });
   for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
     const i = y * TW + x, l = lab[i] - 1; if (l < 0) continue; const p = P[l], c = pc[l];
@@ -1365,7 +1382,8 @@ void main(){
   float box1 = smoothstep(0.62, 0.9, dot(R, normalize(vec3(-0.55, 0.55, 0.62)))), box2 = smoothstep(0.8, 0.95, dot(R, normalize(vec3(0.85, 0.3, 0.2))));
   float env = (box1 * 0.16 + box2 * 0.1) * (0.35 + 0.65 * pow(1.0 - abs(dot(N, V)), 1.5) + 0.4 * core);
   vec3 col = body * alpha + vec3(spec + twinkle + env) * (0.6 + 0.4 * tw);
-  float lead = (1.0 - smoothstep(uLeadW * 0.55, uLeadW * 1.2, a.g)) * uLead;
+  float lfw = max(fwidth(a.g) * 0.75, uLeadW * 0.12);   // anti-aliased: the edge is always about one screen pixel soft
+  float lead = (1.0 - smoothstep(uLeadW - lfw, uLeadW + lfw, a.g)) * uLead;
   vec3 leadC = mix(vec3(0.3, 0.29, 0.28) * (0.7 + 0.6 * max(dot(N, L), 0.0)) + vec3(spec * 0.5), vec3(0.05, 0.045, 0.04) + vec3(spec * 0.15), tw);
   col = mix(col, leadC, lead); alpha = mix(alpha, 1.0, lead);
   col += vec3(1.0, 0.72, 0.4) * heat * 1.25; alpha = max(alpha, heat * 0.8);
@@ -1420,7 +1438,8 @@ void main(){
   float a = max(max(tn.x, tn.y), max(tn.z, 0.0)), b = min(min(tf.x, tf.y), tf.z);
   if (rd.y < 0.0) b = min(b, -ro.y / rd.y);
   if (b <= a) discard;
-  const int N = 40; float dt = (b - a) / float(N), j = hsh(gl_FragCoord.xy + fract(uTime) * 61.0);
+  // a fixed, even dither (interleaved gradient noise) instead of fresh random noise each frame: no shimmering grain
+  const int N = 56; float dt = (b - a) / float(N), j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   vec3 Ll = (uInv * vec4(uLight, 1.0)).xyz, acc = vec3(0.0);
   for (int i = 0; i < N; i++) {
     vec3 P = ro + rd * (a + (float(i) + j) * dt), Pl = (uInv * vec4(P, 1.0)).xyz;
@@ -1431,7 +1450,7 @@ void main(){
     if (t <= 0.0) {
       // still on its way in: plain warm sunlight, in the column that is about to reach the glass
       float din = -t * length(uLight - P);
-      vec2 ei = smoothstep(vec2(0.0), vec2(0.03), uv) * smoothstep(vec2(0.0), vec2(0.03), 1.0 - uv);
+      vec2 ei = smoothstep(vec2(0.0), vec2(0.05), uv) * smoothstep(vec2(0.0), vec2(0.05), 1.0 - uv);
       float dust0 = 0.6 + 0.4 * sin(P.x * 70.0 + uTime * 0.35) * sin(P.y * 55.0 - uTime * 0.25) * sin(P.z * 63.0 + 1.7);
       acc += vec3(1.0, 0.94, 0.8) * 0.45 * dust0 * ei.x * ei.y * exp(-din / (uSize.y * 1.4)) * (1.0 - smoothstep(0.0, uSize.y * 0.05, -Pl.z) * 0.0);
       continue;
@@ -1442,7 +1461,7 @@ void main(){
     vec3 col = mix(vec3(1.0, 0.95, 0.84), clamp(mix(vec3(dot(cs, vec3(0.333))), cs, 1.4), 0.0, 1.0), c.a) * (1.0 - 0.85 * lead);
     float dust = 0.6 + 0.4 * sin(P.x * 70.0 + uTime * 0.35) * sin(P.y * 55.0 - uTime * 0.25) * sin(P.z * 63.0 + 1.7);
     float d = t * length(uLight - P), fade = exp(-d / (uSize.y * 1.6));
-    vec2 e = smoothstep(vec2(0.0), vec2(0.02), uv) * smoothstep(vec2(0.0), vec2(0.02), 1.0 - uv);
+    vec2 e = smoothstep(vec2(0.0), vec2(0.04), uv) * smoothstep(vec2(0.0), vec2(0.04), 1.0 - uv);
     acc += col * rev * dust * fade * e.x * e.y;
   }
   gl_FragColor = vec4(acc * dt / uSize.y * uStr, 1.0);
@@ -1493,7 +1512,8 @@ function enterWindow() {
   W.yaw = yaw; W.C = new THREE.Vector3(cx, 0, cz);
   W.floatY = Math.max(.05, Hp * .2) + Hp / 2;
   // the sun is far away, so its rays arrive parallel: low (30 degrees) and from behind the window off to one side, so the rays cross the view at a slant
-  const sunEl = 30 * Math.PI / 180, sunAz = W.yaw + 1.1; W.sunDir = new THREE.Vector3(-Math.sin(sunAz) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(sunAz) * Math.cos(sunEl));
+  // on a tall phone screen the sun stands higher, so its light lands below the pane, in view
+  const sunEl = (camera.aspect < .9 ? 52 : 30) * Math.PI / 180, sunAz = W.yaw + 1.1; W.sunDir = new THREE.Vector3(-Math.sin(sunAz) * Math.cos(sunEl), Math.sin(sunEl), -Math.cos(sunAz) * Math.cos(sunEl));
   W.light = W.sunDir.clone().multiplyScalar(80).add(new THREE.Vector3(W.C.x, W.floatY, W.C.z));
   // the panel itself
   const grp = new THREE.Group(); grp.rotation.order = 'YXZ'; grp.position.set(W.C.x, .0022, W.C.z); grp.rotation.set(-Math.PI / 2, W.yaw, 0);
