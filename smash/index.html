@@ -1858,8 +1858,8 @@ window.__smash = { pickAt, strike, state: () => ({ objs: objs.map(o => [o.kind, 
   reform: () => startReform(), reforming: () => !!reform,
   air: () => { const o = objs.find(q => q.air && !q.broken); if (!o) return null; o.group.updateMatrixWorld(true); const v = o.group.localToWorld(new THREE.Vector3(0, o.def.flat ? .01 : o.H * .5, 0)).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight, o.kind, o.air.phase, o.hp, o.held ? o.held.length : 0]; },
   combo: () => TOSS.combo, speed: k => { TEST.speed = k; },
-  stackTest: (kind, n, x = 0, z = 0) => { TOSS.paused = true; let below = null;
-    for (let i = 0; i < n; i++) { const o = makeObject(kind); const land = below ? landOn(o, below) : new THREE.Vector3(x, 0, z); o.air = { land, yaw: rand(TAU), gentle: true, drop: true }; root.add(o.group); objs.push(o); landObject(o); below = o; } },
+  stackTest: (kind, n, x = 0, z = 0) => { TOSS.paused = true; let below = null; const kinds = Array.isArray(kind) ? kind : Array(n).fill(kind);
+    for (let i = 0; i < kinds.length; i++) { const o = makeObject(kinds[i]); const land = below ? landOn(o, below) : new THREE.Vector3(x, 0, z); o.air = { land, yaw: rand(TAU), gentle: true, drop: true }; root.add(o.group); objs.push(o); landObject(o); below = o; } },
   overlaps: () => { const L = objs.filter(o => o.landed && alive(o)); const chain = (a, b) => { for (let q = a; q; q = q.below) if (q === b) return true; for (let q = b; q; q = q.below) if (q === a) return true; return false; };
     const bad = []; for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const a = L[i], b = L[j]; if (chain(a, b)) continue; const d = Math.hypot(a.x - b.x, a.z - b.z); if (d < (a.def.R + b.def.R) * .92) bad.push([a.kind, b.kind, +d.toFixed(3)]); } return { landed: L.length, stacked: L.filter(o => o.below).length, bad }; }, queue: k => { TOSS.bag.push(...k); } };
 clearTable();
