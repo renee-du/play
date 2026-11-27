@@ -1020,7 +1020,7 @@ const HAM = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), vi
 const LIFT = .07, TILT = .55;
 const GRIP = { x: Math.cos(.42) * .24, y: .035 + Math.sin(.42) * .24 }; // where the hand holds the handle, in the hammer's frame
 const CH = { on: false, t0: 0, k: 1, touch: false, xy: null };
-const chargeLevel = () => CH.on ? clamp((performance.now() - CH.t0 - 120) / 850, 0, 1) : 0;
+const chargeLevel = () => CH.on ? clamp((performance.now() - CH.t0 - 200) / 850, 0, 1) : 0;
 function hammerUpdate(rdt) {
   HAM.t += rdt;
   const tHit = .065 + .045 * Math.max(0, (HAM.k0 || 1) - 1);
@@ -1824,7 +1824,7 @@ let tapTimer = null, tapAt = null, gesture = null, rdrag = null;
 function swingAt(x, y, touch, power = 0) {
   audioInit(); if (reform) return;
   const hit = pickAt(x, y); if (!hit) return;
-  hit.power = power; hit.dmg = 1 + Math.round(power * 3);
+  hit.power = power; hit.dmg = 1 + Math.floor(9 * Math.pow(power, 1.6) + 1e-6); // builds slowly, then a full wind-up counts for ten blows
   if (power > .25) whoosh();
   if (HAM.pending) strike(HAM.pending);
   HAM.touch = touch; HAM.point.copy(hit.point); HAM.normal.copy(hit.normal);
