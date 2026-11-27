@@ -47,10 +47,12 @@ const easeOut = t => 1 - Math.pow(1 - t, 3);
 function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 
 /* -------------------------------------------------------------- renderer */
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-const DPR = Math.min(window.devicePixelRatio || 1, 1.75);
+// on dense screens the pixels are small enough that edge smoothing costs more than it shows
+const MOBILE = matchMedia('(pointer: coarse)').matches;
+const renderer = new THREE.WebGLRenderer({ antialias: (window.devicePixelRatio || 1) < 2, powerPreference: 'high-performance' });
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
 // full screen on a large display is a lot of pixels: cap the frame at about 2.4 million, which still looks sharp
-const PR_FLOOR = DPR >= 2 ? 1.25 : 1;
+const PR_FLOOR = DPR >= 2 ? 1.5 : 1;
 const prFor = () => clamp(Math.min(DPR, Math.sqrt(3.6e6 / (innerWidth * innerHeight))), Math.min(PR_FLOOR, DPR), DPR);
 renderer.setPixelRatio(prFor());
 renderer.setSize(innerWidth, innerHeight);
@@ -87,10 +89,10 @@ const camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, 0.05, 3
 const key = new THREE.DirectionalLight(0xfff4e8, 2.5);
 key.position.set(-1.1, 2.4, 1.2);
 key.castShadow = true;
-key.shadow.mapSize.set(1024, 1024);
+key.shadow.mapSize.set(MOBILE ? 512 : 1024, MOBILE ? 512 : 1024);
 key.shadow.camera.left = -1.3; key.shadow.camera.right = 1.3; key.shadow.camera.top = 1.3; key.shadow.camera.bottom = -1.3;
 key.shadow.camera.near = 0.5; key.shadow.camera.far = 6;
-key.shadow.radius = 3.5; key.shadow.blurSamples = 8; key.shadow.bias = -0.0004;
+key.shadow.radius = MOBILE ? 2 : 3.5; key.shadow.blurSamples = MOBILE ? 6 : 8; key.shadow.bias = -0.0004;
 scene.add(key, key.target);
 const rim = new THREE.DirectionalLight(0xeef3ff, 0.55); rim.position.set(1.6, 1.2, -1.5); scene.add(rim);
 
@@ -391,7 +393,7 @@ function porcelain(opts = {}) { return new THREE.MeshPhysicalMaterial(Object.ass
 function biscuit(col) { return new THREE.MeshStandardMaterial({ color: col, roughness: .94, metalness: 0 }); }
 function glass(tint, base, edge = .92) {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: .02, metalness: 0, ior: 1.5, specularIntensity: 1, envMapIntensity: 2,
-    iridescence: .2, iridescenceIOR: 1.33, iridescenceThicknessRange: [220, 620], transparent: true, depthWrite: false });
+    iridescence: MOBILE ? 0 : .2, iridescenceIOR: 1.33, iridescenceThicknessRange: [220, 620], transparent: true, depthWrite: false });
   // premultiplied: the tinted body lets the room through, the reflections are added on top at full strength
   m.blending = THREE.CustomBlending; m.blendSrc = THREE.OneFactor; m.blendDst = THREE.OneMinusSrcAlphaFactor;
   m.blendSrcAlpha = THREE.OneFactor; m.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
@@ -684,7 +686,7 @@ function makeKinds() {
     const pts = vessel(wall, t, sc);
     const outTex = memoTex('blueO', () => mottle('#aabfe0', [['#56607a', .25, .6]], 1024, 256, 500, ['#9c8f80', .05]));
     const inTex = memoTex('blueI', () => mottle('#f1e1a3', [['#7a6a40', .2, .5]], 1024, 1024, 700));
-    const mats = [new THREE.MeshPhysicalMaterial({ map: outTex, roughness: .62, sheen: .3, sheenColor: 0xffffff, sheenRoughness: .6 }), new THREE.MeshPhysicalMaterial({ map: inTex, roughness: .55 }), biscuit('#b8aa96'), new THREE.MeshPhysicalMaterial({ color: 0xcbd8ee, roughness: .55 })];
+    const mats = [new THREE.MeshPhysicalMaterial({ map: outTex, roughness: .62, sheen: MOBILE ? 0 : .3, sheenColor: 0xffffff, sheenRoughness: .6 }), new THREE.MeshPhysicalMaterial({ map: inTex, roughness: .55 }), biscuit('#b8aa96'), new THREE.MeshPhysicalMaterial({ color: 0xcbd8ee, roughness: .55 })];
     return { parts: [lathe(pts, { mats: { outer: 0, inner: 1, edge: 2, rim: 3 }, uvO: cylUV(H), uvI: planUV(.078) })], mats, R: .078, H, pal: ['#a9bedf', '#f2e2a6', '#7f98c4', '#fff3c4'], edgeCol: '#b8aa96', pitch: .95 };
   };
   K.bottle = () => {
@@ -1016,7 +1018,7 @@ const hammer = new THREE.Group(), hPivot = new THREE.Group();
 // where the face will land: a small ring lying on whatever is under the pointer
 const aim = new THREE.Mesh(new THREE.RingGeometry(.0042, .0058, 40), new THREE.MeshBasicMaterial({ color: 0x1d1a17, transparent: true, opacity: .55, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4 }));
 aim.renderOrder = 20; aim.visible = false; scene.add(aim);
-const HAM = { point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), vis: 0, touch: false, hideT: 0, t: 9, pending: null, k0: 1 };
+const HAM = { target: new THREE.Vector3(), point: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), vis: 0, touch: false, hideT: 0, t: 9, pending: null, k0: 1 };
 const LIFT = .07, TILT = .55;
 const GRIP = { x: Math.cos(.42) * .24, y: .035 + Math.sin(.42) * .24 }; // where the hand holds the handle, in the hammer's frame
 const CH = { on: false, t0: 0, k: 1, touch: false, xy: null };
@@ -1034,6 +1036,8 @@ function hammerUpdate(rdt) {
   if (HAM.pending && HAM.t >= tHit) { const p = HAM.pending; HAM.pending = null; strike(p); }
   // past 1 the hammer is wound back: it rises less than it turns, and draws back along its handle toward you
   const over = Math.max(0, k - 1), liftK = Math.min(k, 1) + over * .35;
+  // glide rather than jump: the drawn hammer and its ring ease toward where you are pointing
+  if (HAM.t > .12 && !HAM.touch) HAM.point.lerp(HAM.target, 1 - Math.exp(-rdt * 26)); else if (HAM.touch && CH.on) HAM.point.lerp(HAM.target, 1 - Math.exp(-rdt * 26));
   hammer.position.copy(HAM.point).addScaledVector(UP, LIFT * Math.max(0, liftK));
   if (CH.on && chargeLevel() >= 1) hammer.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(.0016));
   const cr = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), cf = new THREE.Vector3().subVectors(camera.position, HAM.point); cf.y = 0; cf.normalize();
@@ -1786,7 +1790,7 @@ function frame(now) {
     o.wobV.x += (-o.wob.x * 320 - o.wobV.x * 10) * dt; o.wobV.y += (-o.wob.y * 320 - o.wobV.y * 10) * dt; o.wob.addScaledVector(o.wobV, dt);
     if (!o.def.flat && !o.broken && o.landed && !o.dissolve) { o.group.rotation.set(o.wob.y * .05, o.yaw || 0, -o.wob.x * .05); }
   }
-  const sub = dt > 0 ? Math.max(1, Math.ceil(dt / (1 / 240))) : 0, h = dt / Math.max(1, sub);
+  const sub = dt > 0 ? Math.min(4, Math.max(1, Math.ceil(dt / (1 / 120)))) : 0, h = dt / Math.max(1, sub);
   for (let k = 0; k < sub; k++) for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; if (s.asleep) continue; if (stepShard(s, h)) settle(s); }
   for (const o of objs) if (o.staticDirty) { o.staticT = (o.staticT || 0) + rdt; const moving = shards.some(s => !s.asleep && s.obj === o); if (o.staticT > .35 || !moving) rebuildStatic(o); }
   stepReform(rdt);
@@ -1804,14 +1808,16 @@ function frame(now) {
   if (shake > 1e-5) camera.position.add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(shake));
   // while the view is turning the table slides under a still pointer: rest the hammer, aim again once it settles
   const turning = now - (VIEW.lastOrbit || -1e9) < 220 || Math.abs(VIEW.tAz - VIEW.az) + Math.abs(VIEW.tEl - VIEW.el) + Math.abs(VIEW.tDist - VIEW.dist) / VIEW.fit > .004;
-  if (CH.on && CH.touch && CH.xy && HAM.t > .12) { const h = pickAt(CH.xy[0], CH.xy[1]); if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); } }
+  if (CH.on && CH.touch && CH.xy && HAM.t > .12) { const h = pickAt(CH.xy[0], CH.xy[1]); if (h) { HAM.target.copy(h.point); HAM.normal.copy(h.normal); } }
   if (!HAM.touch) {
     if (hoverXY && !turning) { if (HAM.t > .12) {
         HOV.n++;
         const moved = !HOV.xy || HOV.xy[0] !== hoverXY[0] || HOV.xy[1] !== hoverXY[1];
-        if (moved || HOV.n % 3 === 0 || !HOV.obj) { const h = pickAt(hoverXY[0], hoverXY[1]); HOV.xy = hoverXY.slice();
-          if (h) { HAM.point.copy(h.point); HAM.normal.copy(h.normal); HOV.obj = h.obj && h.obj.air ? h.obj : null; if (HOV.obj) { HOV.obj.group.updateMatrixWorld(true); HOV.local = HOV.obj.group.worldToLocal(h.point.clone()); } } }
-        else if (HOV.obj && HOV.obj.air && !HOV.obj.broken) { HOV.obj.group.updateMatrixWorld(true); HAM.point.copy(HOV.obj.group.localToWorld(HOV.local.clone())); }
+        const riding = HOV.obj && HOV.obj.air && !HOV.obj.broken;
+        if (moved || (!riding && HOV.n % 3 === 0)) { const h = pickAt(hoverXY[0], hoverXY[1]); HOV.xy = hoverXY.slice();
+          if (h) { HAM.target.copy(h.point); HAM.normal.copy(h.normal); HOV.obj = h.obj && h.obj.air ? h.obj : null; if (HOV.obj) { HOV.obj.group.updateMatrixWorld(true); HOV.local = HOV.obj.group.worldToLocal(h.point.clone()); } } }
+        else if (riding) { HOV.obj.group.updateMatrixWorld(true); HAM.target.copy(HOV.obj.group.localToWorld(HOV.local.clone())); }
+        else if (HOV.obj) HOV.obj = null;
       } HAM.vis = Math.min(1, HAM.vis + rdt * 8); }
     else HAM.vis = Math.max(0, HAM.vis - rdt * 10);
   }
@@ -1832,7 +1838,7 @@ function swingAt(x, y, touch, power = 0) {
   hit.power = power; hit.dmg = 1 + Math.floor(9 * Math.pow(power, 1.6) + 1e-6); // builds slowly, then a full wind-up counts for ten blows
   if (power > .25) whoosh();
   if (HAM.pending) strike(HAM.pending);
-  HAM.touch = touch; HAM.point.copy(hit.point); HAM.normal.copy(hit.normal);
+  HAM.touch = touch; HAM.point.copy(hit.point); HAM.target.copy(hit.point); HAM.normal.copy(hit.normal);
   if (hit.obj) { hit.obj.group.updateMatrixWorld(true); hit.local = hit.obj.group.worldToLocal(hit.point.clone()); }
   HAM.vis = 1; HAM.hideT = 1.1; HAM.k0 = Math.max(0, Math.min(2.4, HAM.k ?? 1)); HAM.t = 0; HAM.pending = hit;
 }
@@ -1848,8 +1854,8 @@ cv.addEventListener('pointerdown', e => {
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (touches.size === 1) {
     // wait a breath to see whether a second finger follows
-    tapAt = { x: e.clientX, y: e.clientY };
-    clearTimeout(tapTimer); tapTimer = setTimeout(() => { if (touches.size <= 1 && tapAt && !gesture) { CH.on = true; CH.t0 = performance.now() - 70; CH.touch = true; CH.xy = [tapAt.x, tapAt.y]; CH.id = e.pointerId; HAM.touch = true; HAM.vis = 1; HAM.hideT = 9; } tapAt = null; }, 70);
+    tapAt = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    clearTimeout(tapTimer); tapTimer = setTimeout(() => { if (touches.size === 1 && touches.has(e.pointerId) && tapAt && !gesture) { CH.on = true; CH.t0 = performance.now() - 70; CH.touch = true; CH.xy = [tapAt.x, tapAt.y]; CH.id = e.pointerId; HAM.touch = true; HAM.vis = 1; HAM.hideT = 9; } tapAt = null; }, 70);
   } else if (touches.size === 2) { clearTimeout(tapTimer); tapAt = null; gesture = gestureState(); if (CH.on && CH.touch) { CH.on = false; HAM.hideT = .3; } }
 });
 addEventListener('pointermove', e => {
@@ -1865,6 +1871,8 @@ addEventListener('pointermove', e => {
 }, { passive: false });
 const endTouch = e => {
   audioInit(); // iOS unlocks sound on the end of a touch
+  // a tap that lifts before the wind-up starts is simply a swing
+  if (e.pointerType !== 'mouse' && e.type === 'pointerup' && tapAt && tapAt.id === e.pointerId && touches.size === 1 && !gesture) { clearTimeout(tapTimer); const t = tapAt; tapAt = null; swingAt(t.x, t.y, true, 0); }
   if (CH.on && (e.pointerType === 'mouse' ? !CH.touch : (CH.touch && e.pointerId === CH.id))) {
     const power = chargeLevel(), xy = e.pointerType === 'mouse' ? [e.clientX, e.clientY] : CH.xy; CH.on = false;
     if (e.type === 'pointerup' && xy) swingAt(xy[0], xy[1], e.pointerType !== 'mouse', power); else HAM.hideT = .3;
