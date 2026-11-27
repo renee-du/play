@@ -918,6 +918,18 @@ function body(gain, f0 = 120, f1 = 44, dur = .2) {
   const n = A.createBufferSource(); n.buffer = SFX.noise; const f = A.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700; const ng = A.createGain();
   ng.gain.setValueAtTime(gain * .5, t); ng.gain.exponentialRampToValueAtTime(.0001, t + .09); n.connect(f); f.connect(ng); ng.connect(SFX.out); n.start(t, Math.random() * .5); n.stop(t + .12);
 }
+// a miss: a soft, muffled tap, like the hammer set down on a cloth
+function softTap(pan) {
+  if (!SFX.ctx || !SFX.on) return;
+  const A = SFX.ctx, t = A.currentTime + .002, out = A.createGain(); out.gain.value = .6;
+  let node = out; if (A.createStereoPanner) { const p = A.createStereoPanner(); p.pan.value = clamp(pan, -1, 1) * .5; out.connect(p); node = p; } node.connect(SFX.out);
+  const n = A.createBufferSource(); n.buffer = SFX.noise; const lp = A.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420; lp.Q.value = .4;
+  const ng = A.createGain(); ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(.09, t + .006); ng.gain.exponentialRampToValueAtTime(.0001, t + .09);
+  n.connect(lp); lp.connect(ng); ng.connect(out); n.start(t, Math.random() * .5); n.stop(t + .12);
+  const o = A.createOscillator(), og = A.createGain(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(85, t + .07);
+  og.gain.setValueAtTime(0, t); og.gain.linearRampToValueAtTime(.06, t + .005); og.gain.exponentialRampToValueAtTime(.0001, t + .08);
+  o.connect(og); og.connect(out); o.start(t); o.stop(t + .1);
+}
 const panX = x => { const v = new THREE.Vector3(x, 0, 0).project(camera); return clamp(v.x * .7, -.8, .8); };
 
 /* -------------------------------------------------------------- particles */
@@ -1334,7 +1346,7 @@ function strike(hit) {
     if (navigator.vibrate) try { navigator.vibrate(10); } catch (e) { }
     return;
   }
-  play('thud', { gain: .45, rate: rand(.9, 1.0), pan: panX(p.x), verb: .2 });
+  softTap(panX(p.x));
 }
 
 /* -------------------------------------------------------------- cracks */
