@@ -921,10 +921,10 @@ function body(gain, f0 = 120, f1 = 44, dur = .2) {
 // a miss: a soft, muffled tap, like the hammer set down on a cloth
 function softTap(pan) {
   if (!SFX.ctx || !SFX.on) return;
-  const A = SFX.ctx, t = A.currentTime + .002, out = A.createGain(); out.gain.value = .6;
+  const A = SFX.ctx, t = A.currentTime + .002, out = A.createGain(); out.gain.value = 1.5;
   let node = out; if (A.createStereoPanner) { const p = A.createStereoPanner(); p.pan.value = clamp(pan, -1, 1) * .5; out.connect(p); node = p; } node.connect(SFX.out);
-  const n = A.createBufferSource(); n.buffer = SFX.noise; const lp = A.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420; lp.Q.value = .4;
-  const ng = A.createGain(); ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(.09, t + .006); ng.gain.exponentialRampToValueAtTime(.0001, t + .09);
+  const n = A.createBufferSource(); n.buffer = SFX.noise; const lp = A.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650; lp.Q.value = .4;
+  const ng = A.createGain(); ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(.12, t + .006); ng.gain.exponentialRampToValueAtTime(.0001, t + .09);
   n.connect(lp); lp.connect(ng); ng.connect(out); n.start(t, Math.random() * .5); n.stop(t + .12);
   const o = A.createOscillator(), og = A.createGain(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(85, t + .07);
   og.gain.setValueAtTime(0, t); og.gain.linearRampToValueAtTime(.06, t + .005); og.gain.exponentialRampToValueAtTime(.0001, t + .08);
@@ -1588,6 +1588,19 @@ function launch() {
   o.air.apexY = apex.y + land.y; o.yaw = yaw; root.add(o.group); objs.push(o); placeAir(o, 0);
   whoosh();
 }
+// paused mid-flight: let go of the throw and settle straight down from where it is
+function dropNow(o) {
+  const a = o.air, g = o.group, R0 = o.def.R + (o.def.extraR || 0) * .5, A = tableArea();
+  if (a.land && a.land.on && a.land.on.above === o) a.land.on.above = null;
+  const x = clamp(g.position.x, -A.x + R0, A.x - R0), z = clamp(g.position.z, -A.z + R0, A.z - R0);
+  let clear = .2;
+  for (const q of objs) { if (q === o || q.broken || q.dissolve) continue; const t = q.air ? q.air.land : q.landed ? q.group.position : null; if (!t) continue; clear = Math.min(clear, Math.hypot(x - t.x, z - t.z) - (q.def.R + R0)); }
+  let land;
+  if (clear > .004) { land = new THREE.Vector3(x, 0, z); land.clear = clear; }
+  else { o.air = undefined; const cur = g.position.clone(); land = spotFor(o, true) || new THREE.Vector3(x, 0, z); g.position.copy(cur); }
+  const h = Math.max(0, g.position.y - land.y);
+  o.air = { phase: 'float', t: 0, apex: g.position.clone(), land, qFrom: g.quaternion.clone(), yaw: a.yaw || 0, floatDur: .45 + h * 2.4, swayA: .004, swayF: 1, ph: rand(TAU), rockA: .04, prev: g.position.clone(), vel: new THREE.Vector3(), gentle: true };
+}
 function driftDown(o) {
   // something made whole again floats down from where it broke, and settles with its own kind
   const land = spotFor(o, true), under = land.on && land.on.air ? land.on.air : null;
@@ -1910,6 +1923,7 @@ document.getElementById('sound').addEventListener('click', e => { SFX.on = !SFX.
 document.getElementById('reset').addEventListener('click', () => startReform());
 document.getElementById('pause').addEventListener('click', e => {
   TOSS.paused = !TOSS.paused; const b = e.currentTarget;
+  if (TOSS.paused) for (const o of objs) if (o.air && !o.air.gentle && !o.broken) dropNow(o);
   b.setAttribute('aria-pressed', TOSS.paused); b.setAttribute('aria-label', TOSS.paused ? 'Resume new throws' : 'Pause new throws'); b.title = b.getAttribute('aria-label');
   if (!TOSS.paused) TOSS.timer = Math.min(TOSS.timer, .5);
 });
