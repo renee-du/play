@@ -1482,7 +1482,7 @@ function collapse(o) {
   o.above = null; o.below = null;
   while (alive(a)) {
     const next = a.above;
-    a.landed = false; a.below = null; a.above = null;
+    a.landed = false; a.below = null; a.above = null; a.contact.visible = false; if (a.caustic) a.caustic.visible = false;
     if (a.def.flat && a.wbox) { const b = a.wbox; a.wbox = null; hfRebuild(b); }
     const land = below ? landOn(a, below) : new THREE.Vector3(a.x, 0, a.z);
     if (!below) land.clear = 1;
@@ -1610,7 +1610,9 @@ function landObject(o) {
   g.position.copy(a.land); g.quaternion.setFromAxisAngle(UP, a.yaw); o.yaw = a.yaw;
   o.air = null; o.landed = true; o.landedAt = performance.now(); o.x = a.land.x; o.z = a.land.z; o.drop.visible = false;
   o.baseY = a.land.y; o.below = a.land.on || null; o.depth = o.below ? (o.below.depth || 0) + 1 : 0; if (o.below) o.below.above = o;
-  o.contact.visible = true; o.contactFade = 0; if (o.caustic) o.caustic.visible = true;
+  // the light patch and contact shadow are drawn on the table; something standing on a plate or a stack has neither
+  const onTable = (a.land.y || 0) < .001;
+  o.contact.visible = onTable; o.contactFade = 0; if (o.caustic) o.caustic.visible = onTable;
   o.wobV.set(rand(-1, 1) * .8, rand(-1, 1) * .8);
   g.updateMatrixWorld(true);
   if (o.def.flat) { o.wtris = worldTris(o.intact[0].geometry, o.intact[0].matrixWorld); o.wbox = boxOf(o.wtris); hfRaster(o.wtris); }
