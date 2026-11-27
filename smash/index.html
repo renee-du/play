@@ -7,7 +7,7 @@
 <meta name="description" content="A still life of porcelain, stoneware and coloured glass to break with a hammer, piece by piece.">
 <style>
 :root{--paper:#ffffff;--icon:#b3ada6;--icon-hi:#3a3633;--wash:rgba(255,255,255,.72);--focus:#22409b;color-scheme:light}
-html,body{margin:0;height:100%;background:var(--paper);overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--paper);overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;overscroll-behavior:none}
 canvas{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:none;outline:none}
 .tools{position:fixed;z-index:2;top:calc(env(safe-area-inset-top,0px) + 14px);right:calc(env(safe-area-inset-right,0px) + 14px);display:flex;gap:2px}
 .tools button{width:38px;height:38px;display:grid;place-items:center;border:0;border-radius:50%;background:var(--wash);color:var(--icon);cursor:pointer;padding:0;transition:color .2s,background .2s}
@@ -1864,6 +1864,7 @@ addEventListener('pointermove', e => {
   if (touches.size === 2 && gesture) { const g = gestureState(); orbit(-(g.x - gesture.x) * .007, (g.y - gesture.y) * .006, gesture.d / Math.max(20, g.d)); gesture = g; }
 }, { passive: false });
 const endTouch = e => {
+  audioInit(); // iOS unlocks sound on the end of a touch
   if (CH.on && (e.pointerType === 'mouse' ? !CH.touch : (CH.touch && e.pointerId === CH.id))) {
     const power = chargeLevel(), xy = e.pointerType === 'mouse' ? [e.clientX, e.clientY] : CH.xy; CH.on = false;
     if (e.type === 'pointerup' && xy) swingAt(xy[0], xy[1], e.pointerType !== 'mouse', power); else HAM.hideT = .3;
