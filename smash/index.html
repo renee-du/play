@@ -1319,7 +1319,7 @@ function panelTextures(P, Wp, Hp) {
   for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) { const i = y * TW + x, l = lab[i];
     bd[i] = (x === 0 || y === 0 || x === TW - 1 || y === TH - 1 || lab[i - 1] !== l || lab[i + 1] !== l || lab[i - TW] !== l || lab[i + TW] !== l) ? 0 : 1e9; }
   chamfer(bd, null);
-  const cap = clamp(.006 / px, 6, 20), leadPx = Math.max(1.5, .0008 / px);
+  const cap = clamp(.006 / px, 6, 20), leadPx = Math.max(1.05, .00055 / px);
   const colA = new Uint8Array(N * 4), auxA = new Uint8Array(N * 4), pc = P.map(p => { const o = {}; p.col.getRGB(o, THREE.SRGBColorSpace); return o; });
   for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
     const i = y * TW + x, l = lab[i] - 1; if (l < 0) continue; const p = P[l], c = pc[l];
